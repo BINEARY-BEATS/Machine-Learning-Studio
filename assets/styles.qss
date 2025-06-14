@@ -1,0 +1,20 @@
+QWidget {
+    font-family: Arial, sans-serif;
+}
+QPushButton {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 10px;
+    font-size: 16px;
+    border-radius: 5px;
+    margin: 5px;
+}
+QPushButton:hover {
+    background-color: #45a049;
+}
+QStackedWidget {
+    background-color: #f4f4f9;
+    padding: 20px;
+    border-radius: 5px;
+}
