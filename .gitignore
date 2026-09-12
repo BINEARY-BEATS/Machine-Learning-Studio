@@ -55,3 +55,5 @@ thresh_test/
 !requirements-core.txt
 !requirements-dev.txt
 !requirements-ml-extras.txt
+
+logs/
