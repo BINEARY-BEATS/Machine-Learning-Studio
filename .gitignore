@@ -1,23 +1,57 @@
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Virtual Environment
-venv/
+*.py[cod]
+*$py.class
+*.so
+.Python
 env/
-*/venv/
-*/env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Log files 
-logs/
-*.log
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+coverage_out.txt
 
-# IDE-specific files
-.vscode/
-.idea/
+# Temp / Test Data
+*.csv
+*.parquet
+*.feather
+*.json
+*.jsonl
+*.db
+*.joblib
+temp_test.db
+dirty_dataset.csv
+synthetic_5M.csv
+large_test.csv
 
-# OS-specific files
-.DS_Store
-Thumbs.db
+# Test Projects
+test_remote/
+test_sql_proj/
+dirty_test/
+chunk_api_test/
+chunk_proj/
+empty_chunk_test/
+api_test/
+thresh_test/
+
+# Text files
+*.txt
+!requirements.txt
+!requirements-core.txt
+!requirements-dev.txt
+!requirements-ml-extras.txt
