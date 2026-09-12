@@ -10,3 +10,6 @@ s3fs
 gcsfs
 sqlalchemy
 pyarrow
+
+PyYAML
+statsmodels

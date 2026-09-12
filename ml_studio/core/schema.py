@@ -11,6 +11,15 @@ import numpy as np
 import pandas as pd
 
 
+class ColumnRole(str, Enum):
+    FEATURE = "feature"
+    TARGET = "target"
+    ID = "id"
+    GROUP = "group"
+    TIME_INDEX = "time_index"
+    WEIGHT = "weight"
+    DROP = "drop"
+
 class ColumnKind(str, Enum):
     NUMERIC = "numeric"
     CATEGORICAL = "categorical"
@@ -25,6 +34,7 @@ class ColumnSchema:
     name: str
     dtype: str
     kind: ColumnKind
+    role: ColumnRole = ColumnRole.FEATURE
     nullable: bool = True
     unique_count: int = 0
     sample_values: list[Any] = field(default_factory=list)
@@ -43,6 +53,7 @@ class DatasetSchema:
                     "name": c.name,
                     "dtype": c.dtype,
                     "kind": c.kind.value,
+                    "role": c.role.value,
                     "nullable": c.nullable,
                     "unique_count": c.unique_count,
                 }
@@ -81,6 +92,7 @@ def infer_schema(df: pd.DataFrame) -> DatasetSchema:
                 name=str(col),
                 dtype=str(series.dtype),
                 kind=kind,
+                role=ColumnRole.FEATURE,
                 nullable=bool(series.isnull().any()),
                 unique_count=int(series.nunique(dropna=True)),
                 sample_values=series.dropna().head(3).tolist(),

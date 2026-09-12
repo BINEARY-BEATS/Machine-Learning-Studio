@@ -88,7 +88,7 @@ def test_cli_stubs(tmp_path, capsys):
         with patch.object(sys, 'argv', ['mls', 'project', 'info', 'test_stubs']):
             cli_main()
             captured = capsys.readouterr()
-            assert "Not yet implemented" in captured.out
+            assert "Project: test_stubs" in captured.out
             
         with patch.object(sys, 'argv', ['mls', 'data', 'head', 'test_stubs', '-n', '5']):
             cli_main()

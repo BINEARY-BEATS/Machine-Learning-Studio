@@ -2,3 +2,6 @@
 pytest>=8.0.0
 pytest-cov>=4.1.0
 pytest-qt>=4.3.0
+
+pytest-qt
+pytest-cov

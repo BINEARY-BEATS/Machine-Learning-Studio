@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QListWidget, QPushButton, QVBoxLayout
 
-from ml_studio.core.pipeline import PreprocessingPipeline
-from ml_studio.core.transforms.base import get_transform, list_transforms
-from ml_studio.core.transforms import registry  # noqa: F401
+from ml_studio.core.pipeline import Pipeline
+from ml_studio.transforms.registry import get as get_transform, list_all as list_transforms
 from ml_studio.gui.pages.base_page import BasePage
 from ml_studio.gui.widgets.card import Card
 from ml_studio.gui.widgets.empty_state import EmptyState
@@ -15,7 +14,7 @@ from ml_studio.gui.widgets.tag_chip import TagChip
 
 class PreparePage(BasePage):
     def __init__(self, container, parent=None):
-        self.pipeline = PreprocessingPipeline()
+        self.pipeline = Pipeline()
         super().__init__(container, parent)
 
     def _build_ui(self) -> None:
@@ -34,7 +33,7 @@ class PreparePage(BasePage):
 
         row = QHBoxLayout()
         self._transform_combo = QComboBox()
-        self._transform_combo.addItems(list_transforms())
+        self._transform_combo.addItems([t['name'] for t in list_transforms()])
         self._add_btn = QPushButton("Add Step")
         self._add_btn.setObjectName("PrimaryButton")
         self._clear_btn = QPushButton("Clear Pipeline")
@@ -66,7 +65,7 @@ class PreparePage(BasePage):
         self._empty.hide()
 
     def _clear_pipeline(self) -> None:
-        self.pipeline = PreprocessingPipeline()
+        self.pipeline = Pipeline()
         self._pipeline_list.clear()
         self._status.setText("0 steps")
         self._status.set_variant("info")

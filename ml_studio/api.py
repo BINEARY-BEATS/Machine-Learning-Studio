@@ -19,6 +19,8 @@ class Project:
         self.name = name
         self.dataset: Dataset | None = None
         self.task: str | None = None
+        self.schema_columns: dict[str, dict] = {}  # {col: {"role": "feature", "kind": "unknown"}}
+        self.pipeline: Any | None = None
 
     @property
     def target(self) -> str | None:
@@ -38,6 +40,13 @@ class Project:
             self.dataset = load_dataset_from_url(source, sample=sample, **kwargs)
         else:
             self.dataset = load_dataset_from_path(Path(source), sample=sample)
+            
+        # Initialize schema_columns based on inferred schema
+        from ml_studio.core.schema import infer_schema
+        schema = infer_schema(self.dataset.dataframe)
+        for col in schema.columns:
+            self.schema_columns[col.name] = {"role": col.role.value, "kind": col.kind.value}
+            
         self.save()
         return self.dataset
 
@@ -62,12 +71,24 @@ class Project:
         return f"Full dataset loaded: {self.dataset.row_count} rows."
 
     def get_xy(self) -> tuple[pd.DataFrame, pd.Series]:
-        """Return X and y for the dataset."""
-        if not self.dataset or not self.dataset.target_column:
-            raise ValueError("Dataset and target column must be set")
+        """Return X and y for the dataset based on column roles."""
+        if not self.dataset:
+            raise ValueError("Dataset must be set")
+            
+        target_cols = [c for c, info in self.schema_columns.items() if info["role"] == "target"]
+        if not target_cols:
+            raise ValueError("No target column set.")
+        target_col = target_cols[0]
+        
+        feature_cols = [c for c, info in self.schema_columns.items() if info["role"] == "feature" and c in self.dataset.dataframe.columns]
+        
         df = self.dataset.dataframe
-        y = df[self.dataset.target_column]
-        X = df.drop(columns=[self.dataset.target_column])
+        y = df[target_col]
+        X = df[feature_cols]
+        # Attach roles to X for Pipeline role validation
+        X.attrs["roles"] = {c: self.schema_columns.get(c, {}).get("role", "feature") for c in X.columns}
+        X.attrs["roles"][target_col] = "target"
+        
         return X, y
 
     def save(self) -> None:
@@ -99,6 +120,7 @@ class Project:
             "name": self.name,
             "task": self.task,
             "target": self.target,
+            "schema_columns": self.schema_columns,
             "environment": env
         }
         
@@ -106,6 +128,8 @@ class Project:
             json.dump(manifest, f, indent=2)
             
         joblib.dump(self.dataset, path / "dataset.joblib")
+        if self.pipeline:
+            self.pipeline.save(str(path / "pipeline.json"))
         
     @classmethod
     def open(cls, name: str) -> Project:
@@ -122,17 +146,54 @@ class Project:
             
         proj = cls(manifest["name"])
         proj.task = manifest["task"]
+        proj.schema_columns = manifest.get("schema_columns", {})
         proj.dataset = joblib.load(path / "dataset.joblib")
+        
+        if (path / "pipeline.json").exists():
+            from ml_studio.core.pipeline import Pipeline
+            proj.pipeline = Pipeline.load(str(path / "pipeline.json"))
+            
         return proj
+
+    def set_role(self, column: str, role: str) -> None:
+        """Set the role for a specific column."""
+        if not self.dataset:
+            raise ValueError("Load a dataset first")
+        if column not in self.dataset.dataframe.columns:
+            raise KeyError(f"Column '{column}' not found in dataset")
+            
+        from ml_studio.core.schema import ColumnRole
+        valid_roles = [r.value for r in ColumnRole]
+        if role not in valid_roles:
+            raise ValueError(f"Invalid role '{role}'. Must be one of {valid_roles}")
+            
+        if column not in self.schema_columns:
+            self.schema_columns[column] = {"role": "feature", "kind": "unknown"}
+            
+        self.schema_columns[column]["role"] = role
+        if role == "target":
+            self.dataset.target_column = column
+            self.task = self.task or "classification"
+            
+        self.save()
 
     def set_target(self, target: str, task: str = "classification") -> None:
         """Set the target column and task type."""
-        if not self.dataset:
-            raise ValueError("Load a dataset first")
-        if target not in self.dataset.dataframe.columns:
-            raise ValueError(f"Target column '{target}' not found in dataset")
-        self.dataset.target_column = target
         self.task = task
+        self.set_role(target, "target")
+
+    def apply_pipeline(self, pipeline: Any) -> None:
+        """Fit and apply a pipeline to the dataset, saving the result."""
+        X, y = self.get_xy()
+        transformed_X = pipeline.fit_transform(X, y)
+        
+        # Merge back with targets/ids that were ignored
+        non_features = [c for c, info in self.schema_columns.items() if info["role"] != "feature" and info["role"] != "drop" and c in self.dataset.dataframe.columns]
+        
+        final_df = pd.concat([transformed_X, self.dataset.dataframe[non_features]], axis=1)
+        self.dataset.dataframe = final_df
+        self.pipeline = pipeline
+        self.save()
 
     def prepare(self, pipeline: str | None = None) -> None:
         """Run data preparation and feature engineering."""

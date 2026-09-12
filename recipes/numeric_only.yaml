@@ -1,0 +1,16 @@
+name: numeric_only
+version: 1.0.0
+description: Pipeline tailored strictly for numeric-only datasets.
+task: [classification, regression]
+required_column_types: [numeric]
+steps:
+  - transform: Impute
+    params: 
+      strategy: median
+      columns: ["@numeric"]
+  - transform: Standard
+    params: 
+      columns: ["@numeric"]
+  - transform: VarianceThreshold
+    params: 
+      threshold: 0.01

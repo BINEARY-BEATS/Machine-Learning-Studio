@@ -1,0 +1,25 @@
+name: standard_tabular
+version: 1.0.0
+description: Mixed tabular — impute, encode categoricals, scale numerics, select top features.
+task: [classification, regression]
+required_column_types: [numeric, categorical]
+steps:
+  - transform: Impute
+    params:
+      strategy: median
+      columns: ["@numeric"]
+  - transform: Impute
+    params:
+      strategy: mode
+      columns: ["@categorical"]
+  - transform: Target
+    params:
+      columns: ["@categorical"]
+      cv: 5
+      smoothing: 10
+  - transform: Robust
+    params:
+      columns: ["@numeric"]
+  - transform: MISelect
+    params:
+      k: 30

@@ -12,7 +12,7 @@ from typing import Any
 import joblib
 import pandas as pd
 
-from ml_studio.core.pipeline import PreprocessingPipeline
+from ml_studio.core.pipeline import Pipeline
 from ml_studio.core.training.task import TaskType
 
 
@@ -21,7 +21,7 @@ class InferencePipeline:
     """Complete inference artifact: preprocessing + estimator + schema."""
 
     estimator: Any
-    preprocessing: PreprocessingPipeline | None
+    preprocessing: Pipeline | None
     feature_columns: list[str]
     target_column: str
     task: TaskType

@@ -1,0 +1,25 @@
+name: timeseries_ready
+version: 1.0.0
+description: Pipeline tailored for time series, with forward fills and temporal encoding.
+task: [classification, regression]
+required_column_types: [datetime, numeric]
+steps:
+  - transform: FillForward
+    params: 
+      columns: ["@numeric", "@categorical"]
+  - transform: DateParts
+    params: 
+      columns: ["@datetime"]
+      parts: ["year", "month", "day", "dow", "is_weekend", "hour"]
+  - transform: CyclicalEncoding
+    params: 
+      columns: ["@datetime_month"]
+      period: 12
+  - transform: CyclicalEncoding
+    params: 
+      columns: ["@datetime_dow"]
+      period: 7
+  - transform: LogTransform
+    params: 
+      columns: ["@numeric"]
+      offset: 1.0

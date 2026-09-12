@@ -48,5 +48,5 @@ def test_api_get_xy_errors():
     p.dataset = Dataset("test", "test")
     p.dataset.set_dataframe(pd.DataFrame({"a": [1, 2], "b": [3, 4]}), reason="test")
     # target not set
-    with pytest.raises(ValueError, match="Target column not set"):
+    with pytest.raises(ValueError, match="No target column set."):
         p.get_xy()

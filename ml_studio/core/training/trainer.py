@@ -13,7 +13,7 @@ from sklearn.model_selection import cross_val_score, train_test_split
 from sklearn.pipeline import Pipeline as SklearnPipeline
 
 from ml_studio.app.logger import get_logger
-from ml_studio.core.pipeline import PreprocessingPipeline
+from ml_studio.core.pipeline import Pipeline
 from ml_studio.core.training.cv import recommend_cv_strategy
 from ml_studio.core.training.registry import get_model
 from ml_studio.core.training.task import TaskType
@@ -43,7 +43,7 @@ class TrainingResult:
     cv_scores: dict[str, float]
     training_duration: float
     estimator: Any
-    preprocessing: PreprocessingPipeline | None
+    preprocessing: Pipeline | None
     feature_columns: list[str]
     target_column: str
     train_size: int
@@ -61,7 +61,7 @@ class Trainer:
         self,
         df: pd.DataFrame,
         config: TrainingConfig,
-        preprocessing: PreprocessingPipeline | None = None,
+        preprocessing: Pipeline | None = None,
         progress_callback: Callable[[int, str], None] | None = None,
     ) -> TrainingResult:
         start = time.time()
