@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from PyQt6.QtCore import Qt
+
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -72,7 +74,6 @@ class TrainPage(BasePage):
         self._dataset_label = QLabel("Import a dataset on the Data page.")
         self._target_combo = QComboBox()
         self._feature_list = QListWidget()
-        self._feature_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
         self._prepare_label = QLabel("Configure preprocessing on the Prepare page.")
         self._test_spin = QDoubleSpinBox()
         self._test_spin.setRange(0.05, 0.5)
@@ -152,8 +153,9 @@ class TrainPage(BasePage):
         self._feature_list.clear()
         for col in columns:
             item = QListWidgetItem(col)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked if col != suggested_target else Qt.CheckState.Unchecked)
             self._feature_list.addItem(item)
-            item.setSelected(col != suggested_target)
         if suggested_target in columns:
             self._target_combo.setCurrentText(suggested_target)
         idx = self._task_combo.findText(suggested_task.value)
@@ -167,7 +169,7 @@ class TrainPage(BasePage):
         features = [
             self._feature_list.item(i).text()
             for i in range(self._feature_list.count())
-            if self._feature_list.item(i).isSelected() and self._feature_list.item(i).text() != target
+            if self._feature_list.item(i).checkState() == Qt.CheckState.Checked and self._feature_list.item(i).text() != target
         ]
         if not target or not features:
             return None

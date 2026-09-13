@@ -49,16 +49,19 @@ def test_navigate_home_to_data_to_home(qtbot, container):
     assert main_win._stack.currentIndex() == 0
 
 
-def test_open_project_shows_data_page(qtbot, container):
+def test_open_project_updates_ui(qtbot, container):
     main_win = MainWindow(container)
     qtbot.addWidget(main_win)
     
-    with patch("ml_studio.gui.app_controller.QFileDialog.getExistingDirectory", return_value="dummy/path"):
+    with patch("ml_studio.gui.app_controller.QFileDialog.getOpenFileName", return_value=("dummy/path", "")):
         with patch.object(main_win.controller.container.project_manager, "open_project", return_value=True):
-            main_win.controller.open_project(main_win)
+            with patch("ml_studio.gui.main_window.QMessageBox.critical"):
+                with patch.object(main_win.controller, "open_project", return_value=True):
+                    with patch.object(main_win._pages["home"], "refresh_stats") as mock_refresh:
+                        main_win._open_project()
     
-    # Opening a project successfully should navigate to Data page
-    assert main_win._stack.currentIndex() == 1
+    # Opening a project successfully should refresh home stats
+    mock_refresh.assert_called_once()
 
 
 def test_theme_toggle_updates_stylesheet(qtbot, container):

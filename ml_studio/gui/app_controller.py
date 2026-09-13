@@ -131,7 +131,7 @@ class AppController:
         )
         config.target_column = target
         config.feature_columns = features
-        preprocessing = pages["prepare"].pipeline if pages["prepare"].pipeline.nodes else None
+        preprocessing = pages["prepare"].pipeline if pages["prepare"].pipeline.steps else None
         return TrainingWorker(prepared_df, config, preprocessing)
 
     def on_training_complete(self, result, pages) -> bool:
