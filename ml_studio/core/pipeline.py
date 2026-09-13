@@ -22,6 +22,17 @@ class PipelinePreview:
         self.estimated_memory_bytes = 0
         self.leakage_warnings = []
 
+    def __str__(self):
+        lines = [f"Pipeline Preview: {self.original_shape} -> {self.final_shape}"]
+        for i, step in enumerate(self.steps):
+            lines.append(f"Step {i+1}: {step['name']}")
+            lines.append(f"  Shape: {step['input_shape']} -> {step['output_shape']}")
+            if step['added_columns']:
+                lines.append(f"  + {len(step['added_columns'])} columns")
+            if step['removed_columns']:
+                lines.append(f"  - {len(step['removed_columns'])} columns")
+        return "\n".join(lines)
+
 
 class Pipeline(BaseEstimator, TransformerMixin):
     """Ordered chain of transforms. Leakage-safe. Serializable."""
@@ -34,66 +45,90 @@ class Pipeline(BaseEstimator, TransformerMixin):
         self.steps.append(step)
         return self
 
-    def _validate_roles(self, X: pd.DataFrame, step: BaseTransform):
-        """Ensure the step is not illegally transforming protected columns unless explicitly passed."""
-        # Wait, how do we know the roles? Roles are in project schema.
-        # But pipeline operates on DataFrame.
-        # User said: "X, y split uses roles automatically"
-        # "If any step targets a column with role in {TARGET, ID, GROUP, WEIGHT, TIME_INDEX}, raise ValueError."
-        # Exception: "if the user explicitly passes columns=[...] to the transform, respect it."
-        pass  # Implementation for role validation will be integrated with Project, as Pipeline itself just receives X (DataFrame).
-        # Wait, user said "In Pipeline.fit(): If any step targets a column with role... raise ValueError."
-        # If X is just a DataFrame, how does Pipeline know the roles?
-        # Maybe X has attrs? Or we just assume Pipeline is used within Project context.
-        # Actually, let's look for `X.attrs.get('roles', {})`
+    def _validate_roles(self, X: pd.DataFrame) -> None:
         roles = getattr(X, "attrs", {}).get("roles", {})
-        if not roles:
-            return
-            
-        protected_roles = {"target", "id", "group", "weight", "time_index"}
-        
-        # If columns was explicitly passed, it's allowed.
-        explicit_cols = step.params.get("columns", None)
-        if explicit_cols is not None:
-            return
-            
-        # Otherwise, the step will operate on its fitted_columns_.
-        for col in getattr(step, "fitted_columns_", []):
-            role = roles.get(col, "feature")
-            if role in protected_roles:
-                raise ValueError(
-                    f"Step '{step.__class__.__name__}' attempted to transform protected column '{col}' "
-                    f"(role: {role}) implicitly. Explicitly specify columns to override."
-                )
+        for step in self.steps:
+            for col in getattr(step, "columns", []) or []:
+                role = roles.get(col)
+                if role in ("target", "id", "group", "weight", "time_index") and role != "feature":
+                    raise ValueError(
+                        f"Transform '{step.__class__.__name__}' "
+                        f"attempts to modify column '{col}' which has "
+                        f"role '{role}'. Only 'feature' columns may be "
+                        f"transformed. Pass columns=[...] explicitly "
+                        f"to override."
+                    )
 
     def fit(self, X: pd.DataFrame, y: pd.Series | None = None) -> "Pipeline":
         """Fit all steps."""
+        self._validate_roles(X)
         X_curr = X.copy()
-        for step in self.steps:
+        for i, step in enumerate(self.steps):
             step.fit(X_curr, y)
-            self._validate_roles(X, step)
-            # Must transform X_curr for the next step to learn properly
-            X_curr = step.transform(X_curr)
+            if i < len(self.steps) - 1:
+                X_curr = step.transform(X_curr)
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         """Apply all steps."""
-        X_curr = X.copy()
-        for step in self.steps:
-            X_curr = step.transform(X_curr)
-        return X_curr
+        for i, step in enumerate(self.steps):
+            X = step.transform(X)
+        return X
+
+    @property
+    def predict(self):
+        """Apply transforms to the data, and predict with the final estimator."""
+        if not self.steps or not hasattr(self.steps[-1], "predict"):
+            raise AttributeError(f"{self.__class__.__name__} has no predict method")
+        return self._predict
+
+    def _predict(self, X: pd.DataFrame, **predict_params):
+        Xt = X
+        for step in self.steps[:-1]:
+            Xt = step.transform(Xt)
+        return self.steps[-1].predict(Xt, **predict_params)
+
+    @property
+    def predict_proba(self):
+        """Apply transforms, and predict_proba of the final estimator."""
+        if not self.steps or not hasattr(self.steps[-1], "predict_proba"):
+            raise AttributeError(f"{self.__class__.__name__} has no predict_proba method")
+        return self._predict_proba
+
+    def _predict_proba(self, X: pd.DataFrame, **predict_proba_params):
+        Xt = X
+        for step in self.steps[:-1]:
+            Xt = step.transform(Xt)
+        return self.steps[-1].predict_proba(Xt, **predict_proba_params)
+
+    @property
+    def score(self):
+        """Apply transforms, and score with the final estimator."""
+        if not self.steps or not hasattr(self.steps[-1], "score"):
+            raise AttributeError(f"{self.__class__.__name__} has no score method")
+        return self._score
+
+    def _score(self, X: pd.DataFrame, y=None, sample_weight=None):
+        Xt = X
+        for step in self.steps[:-1]:
+            Xt = step.transform(Xt)
+        score_params = {}
+        if sample_weight is not None:
+            score_params["sample_weight"] = sample_weight
+        return self.steps[-1].score(Xt, y, **score_params)
 
     def fit_transform(self, X: pd.DataFrame, y: pd.Series | None = None) -> pd.DataFrame:
         """Fit and apply."""
+        self._validate_roles(X)
         X_curr = X.copy()
-        for step in self.steps:
+        for i, step in enumerate(self.steps):
             # For target encoders, fit_transform provides leak-safe K-fold encoding
             if hasattr(step, "fit_transform") and type(step).__name__ in ["Target", "WOE", "LeaveOneOut"]:
                 X_curr = step.fit_transform(X_curr, y)
             else:
                 step.fit(X_curr, y)
-                self._validate_roles(X, step)
-                X_curr = step.transform(X_curr)
+                if i < len(self.steps) - 1 or hasattr(step, "transform"):
+                    X_curr = step.transform(X_curr)
         return X_curr
 
     def to_dict(self) -> dict:

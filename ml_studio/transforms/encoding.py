@@ -188,10 +188,11 @@ class Frequency(BaseTransform):
 class Hashing(BaseTransform):
     """Hashing encoder (Hash Trick)."""
 
-    def __init__(self, columns=None, n_features=64):
-        super().__init__(columns=columns, n_features=n_features)
+    def __init__(self, columns=None, n_features=64, random_state=None):
+        super().__init__(columns=columns, n_features=n_features, random_state=random_state)
         self.columns = columns
         self.n_features = n_features
+        self.random_state = random_state
 
     @classmethod
     def get_schema(cls) -> dict:

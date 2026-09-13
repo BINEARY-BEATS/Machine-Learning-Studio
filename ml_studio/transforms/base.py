@@ -3,15 +3,27 @@
 from abc import ABC, abstractmethod
 from typing import Any
 import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin
 
 
-class BaseTransform(ABC):
+class BaseTransform(BaseEstimator, TransformerMixin, ABC):
     """Every transform implements this. No exceptions."""
 
     def __init__(self, **kwargs):
         self.params = kwargs
         self.fitted_columns_ = []
         self._is_fitted = False
+
+    def get_params(self, deep=True):
+        """Return parameters for sklearn compatibility."""
+        return self.params
+
+    def set_params(self, **params):
+        """Set parameters for sklearn compatibility."""
+        self.params.update(params)
+        for key, value in params.items():
+            setattr(self, key, value)
+        return self
 
     @classmethod
     @abstractmethod

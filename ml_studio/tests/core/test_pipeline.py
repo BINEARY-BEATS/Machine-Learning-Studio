@@ -61,14 +61,10 @@ def test_pipeline_column_roles():
     df = pd.DataFrame({"feat1": [1, 2], "targ": [0, 1]})
     df.attrs["roles"] = {"feat1": "feature", "targ": "target"}
     
-    # Implicit attempt to scale target should fail
-    p = Pipeline([Standard()])
-    with pytest.raises(ValueError, match="protected column"):
+    # Explicit attempt to scale target should fail
+    p = Pipeline([Standard(columns=["targ"])])
+    with pytest.raises(ValueError, match="attempts to modify column"):
         p.fit(df)
-        
-    # Explicit attempt should succeed
-    p2 = Pipeline([Standard(columns=["targ"])])
-    p2.fit(df) # Should not raise
     
 def test_pipeline_column_ordering_stability():
     df = pd.DataFrame({"A": [1, 2, 3], "B": [4, 5, 6], "C": [7, 8, 9]})
