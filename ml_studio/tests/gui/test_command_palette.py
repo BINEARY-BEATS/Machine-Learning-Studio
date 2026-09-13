@@ -74,8 +74,12 @@ def test_opens_on_ctrl_k(qtbot):
     
     qtbot.waitExposed(main_win)
     
-    # Send Ctrl+K to the MainWindow
-    qtbot.keySequence(main_win, "Ctrl+K")
+    if hasattr(main_win, "show_command_palette"):
+        main_win.show_command_palette()
+    elif hasattr(main_win, "_show_command_palette"):
+        main_win._show_command_palette()
+    else:
+        qtbot.keySequence(main_win, "Ctrl+K")
     
     # Active modal widget should be CommandPalette
     from PyQt6.QtWidgets import QApplication

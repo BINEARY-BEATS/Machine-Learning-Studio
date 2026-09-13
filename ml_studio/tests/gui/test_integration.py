@@ -41,11 +41,11 @@ def test_navigate_home_to_data_to_home(qtbot, container):
     assert main_win._stack.currentIndex() == 0
     
     # Click Data
-    main_win._sidebar.setCurrentRow(1)
+    qtbot.mouseClick(main_win._sidebar._buttons["data"], Qt.MouseButton.LeftButton)
     assert main_win._stack.currentIndex() == 1
     
     # Click Home
-    main_win._sidebar.setCurrentRow(0)
+    qtbot.mouseClick(main_win._sidebar._buttons["home"], Qt.MouseButton.LeftButton)
     assert main_win._stack.currentIndex() == 0
 
 
