@@ -38,6 +38,7 @@ class CommandPalette(QDialog):
         self._populate("")
         self._search.textChanged.connect(self._populate)
         self._list.itemActivated.connect(self._on_select)
+        self._search.returnPressed.connect(self._on_search_return)
         layout.addWidget(self._search)
         layout.addWidget(self._list)
         self.resize(520, 360)
@@ -65,6 +66,10 @@ class CommandPalette(QDialog):
     def _on_select(self, item: QListWidgetItem) -> None:
         self.command_selected.emit(item.data(Qt.ItemDataRole.UserRole))
         self.accept()
+        
+    def _on_search_return(self) -> None:
+        if self._list.count() > 0:
+            self._on_select(self._list.item(0))
 
     @staticmethod
     def fuzzy_match(query: str, text: str) -> bool:

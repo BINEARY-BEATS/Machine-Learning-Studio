@@ -8,7 +8,7 @@ def container():
     config = AppConfig()
     return AppContainer(config=config)
 
-def test_app_controller_init(container):
+def test_app_controller_initial_state(container):
     controller = AppController(container)
     assert controller.container.project_manager.current is None
     assert controller.container is container

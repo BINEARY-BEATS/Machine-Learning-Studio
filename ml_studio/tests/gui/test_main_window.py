@@ -9,7 +9,7 @@ def container():
     config = AppConfig()
     return AppContainer(config=config)
 
-def test_main_window_init(qtbot, container):
+def test_main_window_setup(qtbot, container):
     window = MainWindow(container)
     qtbot.addWidget(window)
     
