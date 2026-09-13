@@ -85,21 +85,13 @@ def test_theme_toggle_updates_stylesheet(qtbot, container):
 def test_command_palette_toggle_integration(qtbot, container):
     main_win = MainWindow(container)
     qtbot.addWidget(main_win)
-    main_win.show()
-    qtbot.waitExposed(main_win)
-    
     # Trigger command palette slot directly since QShortcut can be flaky in headless tests
-    if hasattr(main_win, "show_command_palette"):
-        main_win.show_command_palette()
-    elif hasattr(main_win, "_show_command_palette"):
-        main_win._show_command_palette()
-    else:
-        # Fallback to keySequence
-        qtbot.keySequence(main_win, "Ctrl+K")
-    
-    # Check it's open
-    active = QApplication.activeModalWidget()
-    assert active is not None, "Command palette did not open"
-    assert active.__class__.__name__ == "CommandPalette"
-    
-    active.accept()
+    with patch("ml_studio.gui.widgets.command_palette.CommandPalette.exec") as mock_exec:
+        if hasattr(main_win, "show_command_palette"):
+            main_win.show_command_palette()
+        elif hasattr(main_win, "_show_command_palette"):
+            main_win._show_command_palette()
+        else:
+            qtbot.keySequence(main_win, "Ctrl+K")
+            
+        mock_exec.assert_called_once()

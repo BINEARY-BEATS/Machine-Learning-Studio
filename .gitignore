@@ -57,3 +57,9 @@ thresh_test/
 !requirements-ml-extras.txt
 
 logs/
+*.zip
+fix.py
+widget_tree.txt
+coverage_output.txt
+integration_output.txt
+d2_coverage.txt
