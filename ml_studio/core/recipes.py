@@ -66,8 +66,17 @@ def apply_recipe(recipe_name: str, schema_columns: dict) -> Pipeline:
 
 
 def _expand_column_reference(ref: str, schema_columns: dict) -> list[str]:
-    """Expand @numeric, @categorical, @feature etc."""
+    """Expand @numeric, @categorical, @feature etc., including suffixes like @datetime_month."""
     ref = ref.lower().strip()
+    
+    # Handle suffixes (e.g. @datetime_month -> all @datetime columns + '_month')
+    if '_' in ref and ref.startswith('@'):
+        base_ref, suffix = ref.split('_', 1)
+        # Verify base_ref is a known reference type to avoid splitting valid future tags incorrectly
+        if base_ref in ('@feature', '@target', '@numeric', '@categorical', '@datetime'):
+            base_cols = _expand_column_reference(base_ref, schema_columns)
+            return [f"{c}_{suffix}" for c in base_cols]
+            
     result = []
     
     for col, info in schema_columns.items():
