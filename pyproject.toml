@@ -38,7 +38,7 @@ ml-studio = "ml_studio.main:main"
 [tool.pytest.ini_options]
 testpaths = ["ml_studio/tests"]
 python_files = ["test_*.py"]
-addopts = "--cov=ml_studio --cov-report=term-missing --cov-fail-under=85 -v --tb=short"
+addopts = "-v --tb=short"
 filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.coverage.run]
@@ -46,7 +46,7 @@ source = ["ml_studio/core"]
 omit = ["*/tests/*"]
 
 [tool.coverage.report]
-fail_under = 80
+fail_under = 85
 show_missing = true
 
 [tool.setuptools.packages.find]
