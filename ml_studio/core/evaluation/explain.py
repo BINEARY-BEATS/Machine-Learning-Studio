@@ -15,7 +15,9 @@ def compute_permutation_importance(
     y: pd.Series,
     n_repeats: int = 10,
 ) -> dict[str, float]:
-    result = permutation_importance(model, X, y, n_repeats=n_repeats, random_state=42, n_jobs=-1)
+    result = permutation_importance(
+        model, X, y, n_repeats=n_repeats, random_state=42, n_jobs=1
+    )
     return {col: float(imp) for col, imp in zip(X.columns, result.importances_mean)}
 
 

@@ -33,7 +33,9 @@ class Toast(QWidget):
         duration_ms: int | None = None,
         variant: str = "default",
     ) -> None:
-        safe = variant if variant in self.VARIANTS else "default"
+        safe = variant if variant in self.VARIANTS else (
+            "danger" if variant == "error" else "default"
+        )
         self._label.setText(message)
         self._label.setProperty("toastVariant", safe)
         self._label.style().unpolish(self._label)

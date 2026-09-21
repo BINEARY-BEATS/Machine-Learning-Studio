@@ -17,9 +17,15 @@ def _auto_discover():
 
     # Import all submodules to trigger class registration
     import ml_studio.transforms
+    from ml_studio.app.logger import get_logger
+
+    log = get_logger("transforms.registry")
     for _, module_name, _ in pkgutil.iter_modules(ml_studio.transforms.__path__):
         if module_name not in ["base", "registry"]:
-            importlib.import_module(f"ml_studio.transforms.{module_name}")
+            try:
+                importlib.import_module(f"ml_studio.transforms.{module_name}")
+            except Exception as exc:
+                log.warning("Skipping transform module %s: %s", module_name, exc)
 
 
     def get_all_subclasses(cls):
@@ -31,8 +37,8 @@ def _auto_discover():
 
     # Build registry
     for cls in get_all_subclasses(BaseTransform):
-        # Skip base classes that aren't meant to be instantiated directly
-        if cls.__name__ in ['BaseKFoldEncoder']:
+        # Skip abstract / unfinished transforms (not shown in GUI picker)
+        if cls.__name__ in ("BaseKFoldEncoder", "CustomPython"):
             continue
         name = cls.__name__
         _REGISTRY[name] = cls

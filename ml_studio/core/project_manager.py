@@ -10,6 +10,8 @@ from typing import Callable
 
 from ml_studio.app.config import AppConfig
 from ml_studio.app.logger import get_logger
+from ml_studio.core.persistence.session_io import read_session, write_session
+from ml_studio.core.pipeline import Pipeline
 from ml_studio.core.project import Project, ProjectMetadata
 
 logger = get_logger("project_manager")
@@ -21,7 +23,7 @@ MANIFEST = "manifest.json"
 class ProjectManager:
     """Manages project files (.mlstudio versioned archives)."""
 
-    SUPPORTED_FORMAT_VERSION = 1
+    SUPPORTED_FORMAT_VERSION = 2
 
     def __init__(self, config: AppConfig) -> None:
         self.config = config
@@ -69,12 +71,23 @@ class ProjectManager:
         fmt = manifest.get("format_version", 0)
         if fmt > self.SUPPORTED_FORMAT_VERSION:
             raise ValueError(
-                f"Project format v{fmt} is newer than supported v{self.SUPPORTED_FORMAT_VERSION}. "
+                f"Project format v{fmt} is newer than supported "
+                f"v{self.SUPPORTED_FORMAT_VERSION}. "
                 "Please upgrade Machine Learning Studio."
             )
 
         meta = ProjectMetadata.from_dict(manifest)
         project = Project(metadata=meta, path=path)
+
+        try:
+            session = read_session(extract_dir)
+            project.dataset = session.get("dataset")
+            project.pipeline = session.get("pipeline") or Pipeline()
+            project.schema_overrides = session.get("schema_overrides") or {}
+        except Exception as exc:
+            logger.warning("Could not fully restore session from %s: %s", path, exc)
+            project.pipeline = Pipeline()
+
         project.mark_clean()
         self.current = project
         self._add_recent(path)
@@ -101,14 +114,21 @@ class ProjectManager:
         for sub in ("datasets", "models", "experiments", "pipelines"):
             (staging / sub).mkdir(exist_ok=True)
 
+        self.current.metadata.format_version = self.SUPPORTED_FORMAT_VERSION
         manifest = self.current.metadata.to_dict()
-        manifest["format_version"] = self.SUPPORTED_FORMAT_VERSION
         with (staging / MANIFEST).open("w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2)
 
         settings = self.current.metadata.settings
         with (staging / "settings.json").open("w", encoding="utf-8") as f:
             json.dump(settings, f, indent=2)
+
+        write_session(
+            staging,
+            dataset=self.current.dataset,
+            pipeline=self.current.pipeline,
+            schema_overrides=self.current.schema_overrides,
+        )
 
         with zipfile.ZipFile(save_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for file_path in staging.rglob("*"):

@@ -2,30 +2,34 @@
 
 ![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![Framework](https://img.shields.io/badge/Framework-PyQt6-green.svg)
-![Tests](https://img.shields.io/badge/tests-51%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-287%20collected-brightgreen)
 
-A production-grade, privacy-first desktop ML platform for end-to-end tabular machine learning workflows.
+Privacy-first desktop app for **tabular** machine learning: import → prepare → train → evaluate → predict — all local.
 
 **Author:** Saeed Ur Rehman
 
 ---
 
-## Features
+## What works today
 
-- **Project system** — `.mlstudio` versioned archives with autosave and recent projects
-- **Multi-format data import** — CSV, Excel, Parquet, Feather, Arrow, ORC, SQLite, JSON
-- **Dataset profiling** — cached statistics, quality issues, memory optimization
-- **Preprocessing pipeline** — missing values, encoding, scaling, outliers, feature engineering, selection, balancing
-- **5 task types** — Classification, Regression, Clustering, Anomaly Detection, Time Series
-- **Real models** — sklearn, XGBoost, LightGBM with metadata and hyperparameter support
-- **Cross-validation** — KFold, StratifiedKFold, GroupKFold, TimeSeriesSplit
-- **Optuna tuning** — configurable trials, timeout, pruning
-- **AutoML** — controlled leaderboard with runtime limits
-- **Evaluation** — task-appropriate metrics and reports
-- **Explainability** — permutation importance, SHAP (optional), partial dependence
-- **Model registry** — versioned full-pipeline serialization
-- **Inference** — single and batch prediction with chunked processing
-- **Modern GUI** — 8-page workflow, command palette (Ctrl+K), design tokens, dark/light themes
+- **Projects** — `.mlstudio` archives store metadata, dataset, schema roles, and prepare pipeline; autosave when a path exists
+- **Import** — CSV, Excel, Parquet, Feather, Arrow, ORC, SQLite, JSON (optional deps for some formats)
+- **Profiling** — async stats + quality issues; memory dtype optimization
+- **Prepare** — visual pipeline (impute, encode, scale, outliers, feature eng, selection) + recipes + preview
+- **Train** — Classification, Regression, Clustering, Anomaly Detection; Optuna/Grid tuning when configured; Time Series uses regression models + time-aware CV
+- **Evaluate** — experiment history and metric details
+- **Models / Predict** — registry, single + chunked batch predict, permutation importance (SHAP optional)
+- **GUI** — 8-page shell, Ctrl+K command palette, light/dark themes
+
+## Not finished / limited
+
+- Full AutoML leaderboard UI (core `AutoMLRunner` exists; palette opens Train + Optuna)
+- Drift monitoring tab (labeled Coming soon)
+- Custom Python transform (hidden until implemented)
+- CLI `api.Project.prepare` / `sweep` raise clearly as unimplemented
+- Balancing transforms and some optional ML extras need extra packages
+
+See [REFACTOR_PLAN.md](REFACTOR_PLAN.md) for the upgrade checklist.
 
 ---
 
@@ -35,10 +39,13 @@ A production-grade, privacy-first desktop ML platform for end-to-end tabular mac
 ml_studio/
 ├── app/          # config, theme, logger, DI container
 ├── core/         # ML logic (no Qt imports)
+├── transforms/   # preprocessing registry
 ├── gui/          # presentation only
 ├── assets/
 └── tests/
 ```
+
+**Import rule:** `gui` / `app` → `core`; never `core` → `gui`.
 
 ---
 
@@ -65,6 +72,17 @@ pip install -r requirements-dev.txt   # optional, for tests
 python main.py
 ```
 
+### CLI (workspace folders with `project.json`)
+
+```sh
+python -m ml_studio.cli project create myproj
+python -m ml_studio.cli data load data.csv --project myproj
+python -m ml_studio.cli data head myproj -n 5
+python -m ml_studio.cli data info myproj
+```
+
+Note: the GUI uses `.mlstudio` zip projects; the CLI uses a separate directory-based `api.Project`.
+
 ---
 
 ## Testing
@@ -73,7 +91,7 @@ python main.py
 pytest ml_studio/tests --cov=ml_studio/core
 ```
 
-Core coverage target: **80%+** (currently ~81%).
+Core coverage target: **80%+**.
 
 ---
 
@@ -87,10 +105,10 @@ python ml_studio/tests/benchmarks/benchmark_io.py
 
 ## Workflow
 
-1. Create/open project
-2. Import dataset → profile → select target
-3. Build preprocessing pipeline
-4. Train/compare models → tune → evaluate
-5. Explain → save model → predict → export
+1. Create/open a project  
+2. Import dataset → wait for async profile → set target role on Prepare  
+3. Build preprocessing pipeline (optional)  
+4. Train (validate wizard steps; optional Optuna/Grid) → Evaluate  
+5. Predict (single / batch) → export from Models  
 
-See [REFACTOR_PLAN.md](REFACTOR_PLAN.md) for migration details.
+For upgrade history and remaining polish, see [REFACTOR_PLAN.md](REFACTOR_PLAN.md).

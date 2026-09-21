@@ -9,7 +9,6 @@ from sklearn.feature_selection import (
 )
 from sklearn.linear_model import Ridge, LogisticRegression
 from sklearn.inspection import permutation_importance
-from statsmodels.stats.outliers_influence import variance_inflation_factor
 
 from .base import BaseTransform
 from ml_studio.core.schema import detect_task_type
@@ -391,6 +390,13 @@ class VIFDrop(BaseTransform):
         }
 
     def _fit(self, X: pd.DataFrame, y: pd.Series | None = None) -> None:
+        try:
+            from statsmodels.stats.outliers_influence import variance_inflation_factor
+        except ImportError as exc:
+            raise ImportError(
+                "VIFDrop requires statsmodels. Install with: pip install statsmodels"
+            ) from exc
+
         self.fitted_columns_ = [c for c in X.columns if pd.api.types.is_numeric_dtype(X[c])]
         if not self.fitted_columns_:
             return

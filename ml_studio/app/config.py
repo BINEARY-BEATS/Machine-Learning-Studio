@@ -52,7 +52,7 @@ class AppConfig:
     max_worker_threads: int = 2
     debounce_ms: int = 50
     project_extension: str = ".mlstudio"
-    project_format_version: int = 1
+    project_format_version: int = 2
     available_optional: set[str] = field(default_factory=set)
 
 

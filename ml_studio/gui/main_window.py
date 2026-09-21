@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import QApplication, QHBoxLayout, QMainWindow, QMessageBox, QStackedWidget, QVBoxLayout, QWidget
 
@@ -42,6 +42,7 @@ class MainWindow(QMainWindow):
         self.controller = AppController(container)
         self._theme = ThemeMode.LIGHT
         self._current_page = "home"
+        self._followup_profile = False
 
         self.setWindowTitle("Machine Learning Studio")
         self.setMinimumSize(1200, 800)
@@ -49,9 +50,13 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_menu()
         self._connect_signals()
+        self._pages["home"].wire_empty_actions(
+            self._new_project, self._open_project, self._import_dataset
+        )
         self._apply_theme()
         self.controller.new_project()
         self._sync_project_name()
+        self._setup_autosave()
         self._navigate("home")
 
     def _build_ui(self) -> None:
@@ -120,6 +125,7 @@ class MainWindow(QMainWindow):
         self._pages["home"]._open_btn.clicked.connect(self._open_project)
         self._pages["home"]._import_btn.clicked.connect(self._import_dataset)
         self._pages["data"]._import_btn.clicked.connect(self._import_dataset)
+        self._pages["data"]._empty_import_btn.clicked.connect(self._import_dataset)
         self._pages["data"]._optimize_btn.clicked.connect(self._optimize_memory)
         self._pages["data"]._profile_btn.clicked.connect(self._profile_dataset)
         self._pages["train"]._train_btn.clicked.connect(self._start_training)
@@ -127,14 +133,13 @@ class MainWindow(QMainWindow):
             lambda: self._pages["models"].refresh(self.controller.registry)
         )
         self._pages["models"].predict_requested.connect(self._on_model_predict_requested)
+        self._pages["predict"].batch_predict_requested.connect(self._run_batch_predict)
+        self._pages["prepare"].preview_requested.connect(self._run_pipeline_preview)
         self._pages["settings"]._theme_cb.currentTextChanged.connect(self._on_settings_theme)
-        self._progress.cancel_requested.connect(self._cancel_training)
+        self._progress.cancel_requested.connect(self._cancel_active_task)
 
-    def _cancel_training(self):
-        if self.controller._active_worker:
-            self.controller._active_worker.cancel()
-        if self.controller._active_thread:
-            self.controller._active_thread.requestInterruption()
+    def _cancel_active_task(self) -> None:
+        self.controller.cancel_active_worker()
 
     def _on_model_predict_requested(self, model_id: str) -> None:
         try:
@@ -148,11 +153,14 @@ class MainWindow(QMainWindow):
             self._navigate("predict")
             self._toast.show_message("Model loaded for prediction", variant="success")
         except Exception as exc:
-            self._toast.show_message(f"Error loading model: {exc}", variant="error")
+            self._toast.show_message(f"Error loading model: {exc}", variant="danger")
 
     def _navigate(self, key: str) -> None:
         if key not in self._pages:
             return
+        warn = self._nav_gate_message(key)
+        if warn:
+            self._toast.show_message(warn, variant="warning")
         self._current_page = key
         idx = PAGE_KEYS.index(key)
         self._stack.setCurrentIndex(idx)
@@ -160,6 +168,20 @@ class MainWindow(QMainWindow):
         self._top_bar.set_breadcrumb(["ML Studio", BREADCRUMBS.get(key, key.title())])
         self._pages[key].on_show()
         self._status.set_message(f"{BREADCRUMBS.get(key, key)} ready")
+
+    def _nav_gate_message(self, key: str) -> str | None:
+        """Soft gate: warn when opening pages without prerequisites."""
+        has_data = self.controller.current_dataset is not None
+        has_model = self.controller.predictor is not None or bool(
+            self.controller.registry.list_models()
+        )
+        if key in ("prepare", "train") and not has_data:
+            return "No dataset loaded yet. Import data on the Data page first."
+        if key == "evaluate" and not self._pages["evaluate"]._runs and not has_model:
+            return "No experiments yet. Train a model first."
+        if key == "predict" and not has_model:
+            return "No model loaded. Train or open a model from Models first."
+        return None
 
     def _apply_theme(self) -> None:
         app = QApplication.instance()
@@ -205,7 +227,7 @@ class MainWindow(QMainWindow):
             "profile_dataset": self._profile_dataset,
             "prepare_dataset": lambda: self._navigate("prepare"),
             "train_model": lambda: self._navigate("train"),
-            "run_automl": lambda: self._navigate("train"),
+            "run_automl": self._open_train_for_automl,
             "evaluate_model": lambda: self._navigate("evaluate"),
             "predict": lambda: self._navigate("predict"),
             "model_registry": lambda: self._navigate("models"),
@@ -215,16 +237,69 @@ class MainWindow(QMainWindow):
         if handler:
             handler()
 
+    def _open_train_for_automl(self) -> None:
+        """Honest AutoML entry: open Train with Optuna suggested, not a fake runner."""
+        self._navigate("train")
+        train = self._pages["train"]
+        idx = train._tune_combo.findText("Optuna")
+        if idx >= 0:
+            try:
+                import optuna  # noqa: F401
+
+                train._tune_combo.setCurrentIndex(idx)
+                train._goto_step(len(train.STEPS) - 2)  # Tune step
+                self._toast.show_message(
+                    "Optuna tuning selected — review model, then Start Training.",
+                    variant="default",
+                )
+            except ImportError:
+                self._toast.show_message(
+                    "Optuna not installed. Open Train wizard and use Grid search or None.",
+                    variant="warning",
+                )
+        else:
+            self._toast.show_message("Opened Train wizard.", variant="default")
+
+    def _setup_autosave(self) -> None:
+        self._autosave_timer = QTimer(self)
+        interval = getattr(self.container.config, "autosave_interval_ms", 120_000)
+        self._autosave_timer.setInterval(interval)
+        self._autosave_timer.timeout.connect(self._autosave_tick)
+        self._autosave_timer.start()
+
+    def _autosave_tick(self) -> None:
+        if not self._pages["settings"].autosave_enabled():
+            return
+        pm = self.container.project_manager
+        if not pm.current or not pm.current.dirty or not pm.current.path:
+            return
+        try:
+            self.controller.sync_session_to_project(self._pages)
+            pm.save_project()
+            self._status.set_message("Autosaved")
+        except Exception as exc:
+            logger.warning("Autosave failed: %s", exc)
+
     def _new_project(self) -> None:
         self.controller.new_project()
+        self.controller.clear_pages(self._pages)
+        self._status.update_from_dataset(None)
         self._sync_project_name()
         self._toast.show_message("New project created", variant="success")
         self._pages["home"].refresh_stats(self.controller, self._pages)
+        self._navigate("home")
 
     def _open_project(self) -> None:
         try:
-            if self.controller.open_project(self):
+            if self.controller.open_project(self, self._pages):
                 self._sync_project_name()
+                if self.controller.current_dataset:
+                    self._status.update_from_dataset(self.controller.current_dataset)
+                    self._followup_profile = True
+                    self._profile_dataset(auto=True)
+                    self._navigate("data")
+                else:
+                    self._navigate("home")
                 self._toast.show_message("Project opened", variant="success")
                 self._pages["home"].refresh_stats(self.controller, self._pages)
         except Exception as exc:
@@ -232,8 +307,9 @@ class MainWindow(QMainWindow):
 
     def _save_project(self) -> None:
         try:
-            if self.controller.save_project(self):
+            if self.controller.save_project(self, self._pages):
                 self._toast.show_message("Project saved", variant="success")
+                self._status.set_message("Saved")
         except Exception as exc:
             QMessageBox.critical(self, "Error", str(exc))
 
@@ -259,16 +335,48 @@ class MainWindow(QMainWindow):
         self._status.update_from_dataset(dataset)
         self._navigate("data")
         self._toast.show_message(f"Imported {dataset.name} ({dataset.row_count:,} rows)", variant="success")
+        self._followup_profile = True
 
     def _optimize_memory(self) -> None:
-        msg = self.controller.optimize_memory(self._pages)
-        if msg:
-            self._toast.show_message(msg, variant="success")
+        worker = self.controller.build_optimize_worker()
+        if worker is None:
+            self._toast.show_message("Import a dataset first.", variant="warning")
+            return
+        self._progress.begin("Optimize memory", "Downcasting dtypes…")
+        self.controller.start_worker(
+            worker,
+            self._on_optimize_complete,
+            self._on_worker_progress,
+            self._on_worker_error,
+            self._on_worker_finished,
+        )
 
-    def _profile_dataset(self) -> None:
-        if self.controller.current_dataset:
-            self._pages["data"]._populate_profile()
-            self._toast.show_message("Profile updated")
+    def _on_optimize_complete(self, result) -> None:
+        msg = self.controller.apply_optimize_result(result, self._pages)
+        self._status.update_from_dataset(self.controller.current_dataset)
+        self._toast.show_message(msg, variant="success")
+        self._followup_profile = True
+
+    def _profile_dataset(self, auto: bool = False) -> None:
+        worker = self.controller.build_profiling_worker()
+        if worker is None:
+            if not auto:
+                self._toast.show_message("Import a dataset first.", variant="warning")
+            return
+        self._pages["data"].set_loading(True, "Profiling dataset…")
+        self._progress.begin("Profiling dataset", "Computing statistics and quality issues…")
+        self.controller.start_worker(
+            worker,
+            self._on_profile_complete,
+            self._on_worker_progress,
+            self._on_worker_error,
+            self._on_worker_finished,
+        )
+
+    def _on_profile_complete(self, result) -> None:
+        self._pages["data"].set_loading(False)
+        self._pages["data"].apply_profile_result(result)
+        self._toast.show_message("Profile updated", variant="success")
 
     def _start_training(self) -> None:
         if not self.controller.validate_training(self._pages, self):
@@ -290,12 +398,52 @@ class MainWindow(QMainWindow):
         )
 
     def _on_training_complete(self, result) -> None:
-        saved = self.controller.on_training_complete(result, self._pages)
+        saved, message = self.controller.on_training_complete(result, self._pages)
         if not saved:
-            self._toast.show_message("Model performs worse than baseline. Not saved.", variant="warning")
+            self._toast.show_message(message, variant="warning")
+            QMessageBox.warning(self, "Quality gate", message)
             return
         self._navigate("evaluate")
-        self._toast.show_message("Training complete", variant="success")
+        self._toast.show_message(message, variant="success")
+
+    def _run_batch_predict(self, path: str) -> None:
+        worker = self.controller.build_batch_predict_worker(Path(path))
+        if worker is None:
+            self._toast.show_message("No model loaded for prediction.", variant="warning")
+            return
+        self._progress.begin("Batch prediction", Path(path).name)
+        self.controller.start_worker(
+            worker,
+            self._on_batch_predict_complete,
+            self._on_worker_progress,
+            self._on_worker_error,
+            self._on_worker_finished,
+        )
+
+    def _on_batch_predict_complete(self, out_path) -> None:
+        self._toast.show_message(f"Predictions saved to {out_path}", variant="success")
+        QMessageBox.information(self, "Success", f"Batch predictions saved to:\n{out_path}")
+
+    def _run_pipeline_preview(self) -> None:
+        prepare = self._pages["prepare"]
+        if prepare.dataset is None:
+            self._toast.show_message("Load a dataset first to preview.", variant="warning")
+            return
+        worker = self.controller.build_preview_worker(prepare.pipeline, prepare.dataset)
+        self._progress.begin("Pipeline preview", "Sampling and fitting steps…")
+        self.controller.start_worker(
+            worker,
+            self._on_preview_complete,
+            self._on_worker_progress,
+            self._on_worker_error,
+            self._on_worker_finished,
+        )
+
+    def _on_preview_complete(self, preview) -> None:
+        from ml_studio.gui.dialogs.preview_modal import PreviewModal
+
+        modal = PreviewModal(preview_result=preview, parent=self)
+        modal.exec()
 
     def _on_worker_progress(self, percent: int, message: str) -> None:
         self._progress.update(percent, message)
@@ -303,15 +451,19 @@ class MainWindow(QMainWindow):
 
     def _on_worker_finished(self) -> None:
         self._progress.end()
+        self._pages["data"].set_loading(False)
+        if self._followup_profile:
+            self._followup_profile = False
+            self._profile_dataset(auto=True)
 
     def _on_worker_error(self, msg: str) -> None:
         self._progress.end()
         self._pages["data"].set_loading(False)
         if "cancelled" in msg.lower():
-            self._toast.show_message("Training cancelled by user", variant="warning")
-        else:
-            self._pages["data"].show_error(msg)
-            self._toast.show_message(f"Training failed: {msg}", variant="error")
+            self._toast.show_message("Task cancelled", variant="warning")
+            self._status.set_message("Cancelled")
+            return
+        self._toast.show_message(f"Task failed: {msg}", variant="danger")
         QMessageBox.critical(self, "Error", msg)
         self._status.set_message("Error")
 

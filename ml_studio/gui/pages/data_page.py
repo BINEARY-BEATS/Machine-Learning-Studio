@@ -88,6 +88,10 @@ class DataPage(BasePage):
             "Import a CSV, Excel, Parquet, or JSON file to explore your data.",
             icon_name="import",
         )
+        # CTA wired from MainWindow to import handler
+        self._empty_import_btn = QPushButton("Import dataset")
+        self._empty_import_btn.setObjectName("PrimaryButton")
+        self._empty.set_action(self._empty_import_btn)
         self._error_label = QLabel("")
         self._error_label.setObjectName("ErrorBanner")
         self._error_label.hide()
@@ -145,6 +149,7 @@ class DataPage(BasePage):
             self._model.set_dataframe(__import__("pandas").DataFrame())
             self._empty.show()
             self._tabs.hide()
+            self._clear_profile_tables()
             return
         self._empty.hide()
         self._tabs.show()
@@ -152,14 +157,29 @@ class DataPage(BasePage):
         self._column_filter.clear()
         self._column_filter.addItem("All columns")
         self._column_filter.addItems([str(c) for c in dataset.dataframe.columns])
-        self._populate_profile()
+        self._clear_profile_tables()
 
-    def _populate_profile(self) -> None:
-        if not self._dataset:
+    def _clear_profile_tables(self) -> None:
+        self._profile_table.setRowCount(0)
+        self._issues_table.setRowCount(0)
+
+    def apply_profile_result(self, result) -> None:
+        """Apply async profiling worker output to the Profiling / Quality tabs."""
+        if isinstance(result, dict):
+            profile = result.get("profile")
+            issues = result.get("issues") or []
+        else:
+            # Legacy: worker returned profile only
+            profile = result
+            issues = []
+            if self._dataset is not None:
+                from ml_studio.core.profiling import detect_quality_issues
+
+                issues = detect_quality_issues(self._dataset)
+
+        if profile is None:
             return
-        from ml_studio.core.profiling import detect_quality_issues, profile_dataset
 
-        profile = profile_dataset(self._dataset)
         self._profile_table.setRowCount(len(profile.columns))
         for i, col in enumerate(profile.columns):
             self._profile_table.setItem(i, 0, QTableWidgetItem(col.name))
@@ -173,7 +193,6 @@ class DataPage(BasePage):
             self._profile_table.setItem(i, 8, QTableWidgetItem(f"{col.std:.4g}" if col.std else ""))
             self._profile_table.setItem(i, 9, QTableWidgetItem("—"))
 
-        issues = detect_quality_issues(self._dataset)
         self._issues_table.setRowCount(max(1, len(issues)))
         if not issues:
             self._issues_table.setItem(0, 0, QTableWidgetItem("—"))
@@ -192,4 +211,20 @@ class DataPage(BasePage):
             self._issues_table.setItem(i, 3, QTableWidgetItem(detail or "—"))
             fix_btn = QPushButton("Review")
             fix_btn.setObjectName("GhostButton")
+            fix_btn.clicked.connect(self._goto_prepare)
             self._issues_table.setCellWidget(i, 4, fix_btn)
+
+    def _goto_prepare(self) -> None:
+        win = self.window()
+        if hasattr(win, "_navigate"):
+            win._navigate("prepare")
+
+    def _populate_profile(self) -> None:
+        """Deprecated sync path — kept for tests; prefer apply_profile_result."""
+        if not self._dataset:
+            return
+        from ml_studio.core.profiling import detect_quality_issues, profile_dataset
+
+        profile = profile_dataset(self._dataset)
+        issues = detect_quality_issues(self._dataset)
+        self.apply_profile_result({"profile": profile, "issues": issues})

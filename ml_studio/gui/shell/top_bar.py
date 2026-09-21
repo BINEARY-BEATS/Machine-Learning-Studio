@@ -31,7 +31,9 @@ class TopBar(QFrame):
         self._search.mousePressEvent = lambda _e: self.command_palette_requested.emit()  # type: ignore[method-assign]
         layout.addWidget(self._search, 2)
 
-
+        self._breadcrumb = QLabel("ML Studio")
+        self._breadcrumb.setObjectName("TextMuted")
+        layout.addWidget(self._breadcrumb, 1)
 
         self._project = QLineEdit("Untitled Project")
         self._project.setObjectName("ProjectName")
@@ -54,7 +56,8 @@ class TopBar(QFrame):
         self._theme_btn.setToolTip(label)
 
     def set_breadcrumb(self, parts: list[str]) -> None:
-        pass
+        clean = [p for p in parts if p]
+        self._breadcrumb.setText("  ›  ".join(clean) if clean else "ML Studio")
 
     def set_project_name(self, name: str) -> None:
         self._project.blockSignals(True)

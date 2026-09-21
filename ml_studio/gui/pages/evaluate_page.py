@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QPushButton,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -99,7 +100,16 @@ class EvaluatePage(BasePage):
             "Train a model to see metrics, semantic warnings, and run history here.",
             icon_name="chart",
         )
+        go_train = QPushButton("Go to Train")
+        go_train.setObjectName("PrimaryButton")
+        go_train.clicked.connect(self._goto_train)
+        self._empty.set_action(go_train)
         self._layout.addWidget(self._empty)
+
+    def _goto_train(self) -> None:
+        win = self.window()
+        if hasattr(win, "_navigate"):
+            win._navigate("train")
 
     def set_theme_mode(self, mode: ThemeMode) -> None:
         self._mode = mode
@@ -199,4 +209,29 @@ class EvaluatePage(BasePage):
             self._leaderboard.selectRow(0)
 
     def show_metrics(self, metrics: dict) -> None:
-        pass
+        """Show a one-off metrics dict (tests / quick introspection)."""
+        if not metrics:
+            return
+        self._empty.hide()
+        rows = []
+        for key, val in metrics.items():
+            if key == "confusion_matrix":
+                continue
+            if isinstance(val, float):
+                rows.append((key, f"{val:.4f}", val))
+            else:
+                rows.append((key, str(val), val))
+        self._metrics_table.setRowCount(len(rows))
+        for i, (key, text, raw) in enumerate(rows):
+            self._metrics_table.setItem(i, 0, QTableWidgetItem(key))
+            item = QTableWidgetItem(text)
+            if isinstance(raw, float):
+                color = metric_color(self._mode, key, raw, "REGRESSION")
+                item.setForeground(__import__("PyQt6.QtGui", fromlist=["QColor"]).QColor(color))
+            self._metrics_table.setItem(i, 1, item)
+        primary = metrics.get("r2") or metrics.get("f1") or metrics.get("accuracy")
+        self._primary_card.set_value(
+            f"{primary:.4f}" if isinstance(primary, float) else "—",
+            raw=primary if isinstance(primary, float) else None,
+        )
+        self._primary_card.set_title("Primary metric")

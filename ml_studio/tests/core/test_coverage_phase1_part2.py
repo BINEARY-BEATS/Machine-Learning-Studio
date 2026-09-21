@@ -90,21 +90,24 @@ def test_cli_stubs(tmp_path, capsys):
             captured = capsys.readouterr()
             assert "Project: test_stubs" in captured.out
             
+        # Load data before head/info
+        csv_path = tmp_path / "test.csv"
+        pd.DataFrame({"a": range(10), "b": list("abcdefghij")}).to_csv(csv_path, index=False)
+        p.load_data(str(csv_path))
+        p.save()
+
         with patch.object(sys, 'argv', ['mls', 'data', 'head', 'test_stubs', '-n', '5']):
             cli_main()
             captured = capsys.readouterr()
-            assert "Not yet implemented" in captured.out
-            
+            assert "a" in captured.out
+            assert "b" in captured.out
+
         with patch.object(sys, 'argv', ['mls', 'data', 'info', 'test_stubs']):
             cli_main()
             captured = capsys.readouterr()
-            assert "Not yet implemented" in captured.out
-            
-        # Test profile --json
-        csv_path = tmp_path / "test.csv"
-        pd.DataFrame({"a": range(10)}).to_csv(csv_path, index=False)
-        p.load_data(str(csv_path))
-        
+            assert "Rows: 10" in captured.out
+            assert "Columns: 2" in captured.out
+
         with patch.object(sys, 'argv', ['mls', 'profile', 'test_stubs', '--json']):
             cli_main()
             captured = capsys.readouterr()

@@ -19,7 +19,7 @@ class CommandPalette(QDialog):
         ("Profile Dataset", "profile_dataset"),
         ("Prepare Dataset", "prepare_dataset"),
         ("Train Model", "train_model"),
-        ("Run AutoML", "run_automl"),
+        ("Tune with Optuna…", "run_automl"),
         ("Evaluate Model", "evaluate_model"),
         ("Predict", "predict"),
         ("Open Model Registry", "model_registry"),

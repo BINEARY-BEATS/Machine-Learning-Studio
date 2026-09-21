@@ -46,6 +46,8 @@ def test_train_page_set_dataset(qtbot, container):
     assert page._target_combo.count() > 0
     assert page._feature_list.count() > 0
     assert page.get_task() == TaskType.CLASSIFICATION
+    assert page.build_config() is not None
+    assert page.build_config().tune_method == "none"
 
 def test_evaluate_page_set_results(qtbot, container):
     page = EvaluatePage(container)
@@ -57,9 +59,15 @@ def test_predict_page_set_predictor(qtbot, container):
     page = PredictPage(container)
     qtbot.addWidget(page)
     mock_predictor = MagicMock()
-    
+    mock_predictor.predict_single.return_value = MagicMock(prediction=1, probabilities=[0.2, 0.8])
+
     page.bind_predictor(mock_predictor, ["Feature1", "Feature2"], TaskType.CLASSIFICATION)
     assert page._predictor is mock_predictor
+    page._inputs["Feature1"].setText("1")
+    page._inputs["Feature2"].setText("2")
+    page._run_single()
+    mock_predictor.predict_single.assert_called_once()
+    assert "Prediction" in page._result_label.text()
 
 def test_models_page_refresh_list(qtbot, container):
     page = ModelsPage(container)

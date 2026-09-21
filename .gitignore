@@ -5,6 +5,8 @@ __pycache__/
 *.so
 .Python
 env/
+venv/
+.venv/
 build/
 develop-eggs/
 dist/
@@ -20,11 +22,20 @@ var/
 .installed.cfg
 *.egg
 
-# Pytest
+# Pytest / coverage
 .pytest_cache/
 .coverage
 htmlcov/
 coverage_out.txt
+coverage_output.txt
+d2_coverage.txt
+integration_output.txt
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
 
 # Temp / Test Data
 *.csv
@@ -38,6 +49,26 @@ temp_test.db
 dirty_dataset.csv
 synthetic_5M.csv
 large_test.csv
+
+# Local project archives & extract caches
+*.mlstudio
+.*_cache/
+
+# Scratch / generated reports
+machine_learning_studio_report.md
+widget_tree.txt
+
+# Ad-hoc root scratch scripts (not package tests)
+/test_manual.py
+/test_manual_d3.py
+/test_onehot.py
+/test_preview.py
+/test_schema.py
+/test_api.py
+/test_chunked.py
+/test_remote_data.py
+/test_script.py
+/fix.py
 
 # Test Projects
 test_remote/
@@ -58,8 +89,3 @@ thresh_test/
 
 logs/
 *.zip
-fix.py
-widget_tree.txt
-coverage_output.txt
-integration_output.txt
-d2_coverage.txt

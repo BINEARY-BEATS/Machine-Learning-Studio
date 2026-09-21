@@ -42,12 +42,17 @@ class Pipeline(BaseEstimator, TransformerMixin):
 
     def add(self, step: BaseTransform) -> "Pipeline":
         """Add a step to the pipeline."""
+        if not hasattr(step, "enabled"):
+            step.enabled = True
         self.steps.append(step)
         return self
 
+    def _active_steps(self) -> list[BaseTransform]:
+        return [s for s in self.steps if getattr(s, "enabled", True)]
+
     def _validate_roles(self, X: pd.DataFrame) -> None:
         roles = getattr(X, "attrs", {}).get("roles", {})
-        for step in self.steps:
+        for step in self._active_steps():
             for col in getattr(step, "columns", []) or []:
                 role = roles.get(col)
                 if role in ("target", "id", "group", "weight", "time_index") and role != "feature":
@@ -60,18 +65,19 @@ class Pipeline(BaseEstimator, TransformerMixin):
                     )
 
     def fit(self, X: pd.DataFrame, y: pd.Series | None = None) -> "Pipeline":
-        """Fit all steps."""
+        """Fit all enabled steps."""
         self._validate_roles(X)
         X_curr = X.copy()
-        for i, step in enumerate(self.steps):
+        active = self._active_steps()
+        for i, step in enumerate(active):
             step.fit(X_curr, y)
-            if i < len(self.steps) - 1:
+            if i < len(active) - 1:
                 X_curr = step.transform(X_curr)
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
-        """Apply all steps."""
-        for i, step in enumerate(self.steps):
+        """Apply all enabled steps."""
+        for step in self._active_steps():
             X = step.transform(X)
         return X
 
@@ -84,9 +90,10 @@ class Pipeline(BaseEstimator, TransformerMixin):
 
     def _predict(self, X: pd.DataFrame, **predict_params):
         Xt = X
-        for step in self.steps[:-1]:
+        active = self._active_steps()
+        for step in active[:-1]:
             Xt = step.transform(Xt)
-        return self.steps[-1].predict(Xt, **predict_params)
+        return active[-1].predict(Xt, **predict_params)
 
     @property
     def predict_proba(self):
@@ -97,9 +104,10 @@ class Pipeline(BaseEstimator, TransformerMixin):
 
     def _predict_proba(self, X: pd.DataFrame, **predict_proba_params):
         Xt = X
-        for step in self.steps[:-1]:
+        active = self._active_steps()
+        for step in active[:-1]:
             Xt = step.transform(Xt)
-        return self.steps[-1].predict_proba(Xt, **predict_proba_params)
+        return active[-1].predict_proba(Xt, **predict_proba_params)
 
     @property
     def score(self):
@@ -110,24 +118,25 @@ class Pipeline(BaseEstimator, TransformerMixin):
 
     def _score(self, X: pd.DataFrame, y=None, sample_weight=None):
         Xt = X
-        for step in self.steps[:-1]:
+        active = self._active_steps()
+        for step in active[:-1]:
             Xt = step.transform(Xt)
         score_params = {}
         if sample_weight is not None:
             score_params["sample_weight"] = sample_weight
-        return self.steps[-1].score(Xt, y, **score_params)
+        return active[-1].score(Xt, y, **score_params)
 
     def fit_transform(self, X: pd.DataFrame, y: pd.Series | None = None) -> pd.DataFrame:
-        """Fit and apply."""
+        """Fit and apply enabled steps."""
         self._validate_roles(X)
         X_curr = X.copy()
-        for i, step in enumerate(self.steps):
-            # For target encoders, fit_transform provides leak-safe K-fold encoding
+        active = self._active_steps()
+        for i, step in enumerate(active):
             if hasattr(step, "fit_transform") and type(step).__name__ in ["Target", "WOE", "LeaveOneOut"]:
                 X_curr = step.fit_transform(X_curr, y)
             else:
                 step.fit(X_curr, y)
-                if i < len(self.steps) - 1 or hasattr(step, "transform"):
+                if i < len(active) - 1 or hasattr(step, "transform"):
                     X_curr = step.transform(X_curr)
         return X_curr
 
@@ -137,7 +146,8 @@ class Pipeline(BaseEstimator, TransformerMixin):
             "steps": [
                 {
                     "class": step.__class__.__name__,
-                    "state": step.to_dict()
+                    "state": step.to_dict(),
+                    "enabled": getattr(step, "enabled", True),
                 }
                 for step in self.steps
             ]
@@ -150,6 +160,7 @@ class Pipeline(BaseEstimator, TransformerMixin):
         for step_data in d.get("steps", []):
             step_class = get_transform(step_data["class"])
             step_obj = step_class.from_dict(step_data["state"])
+            step_obj.enabled = step_data.get("enabled", True)
             steps.append(step_obj)
         return cls(steps=steps)
 
@@ -193,19 +204,16 @@ class Pipeline(BaseEstimator, TransformerMixin):
         return "\n".join(desc)
 
     def preview(self, X: pd.DataFrame, y: pd.Series | None = None) -> PipelinePreview:
-        """Preview shape changes."""
+        """Preview shape changes for enabled steps."""
         preview = PipelinePreview()
         preview.original_shape = X.shape
         
         X_curr = X.copy()
         
-        for step in self.steps:
+        for step in self._active_steps():
             in_cols = set(X_curr.columns)
             in_shape = X_curr.shape
             
-            # Predict output columns without full fit if possible, but actually we need to fit to know.
-            # We'll just clone the step, fit it, and transform to see what happens.
-            # A full fit might be expensive, but preview implies computing it.
             step_clone = get_transform(step.__class__.__name__)(**step.params)
             step_clone.fit(X_curr, y)
             X_curr = step_clone.transform(X_curr)

@@ -32,6 +32,8 @@ class TrainingConfig:
     cv_splits: int = 5
     hyperparameters: dict[str, Any] = field(default_factory=dict)
     is_time_series: bool = False
+    tune_method: str = "none"  # none | grid | optuna
+    tune_trials: int = 20
 
 
 @dataclass
@@ -80,8 +82,9 @@ class Trainer:
         ) else None
 
         if preprocessing:
+            n_steps = len(getattr(preprocessing, "steps", []) or [])
             if progress_callback:
-                progress_callback(12, f"Applying preprocessing pipeline ({len(preprocessing.nodes)} step(s))…")
+                progress_callback(12, f"Applying preprocessing pipeline ({n_steps} step(s))…")
             if y is not None:
                 X_processed = preprocessing.fit_transform(X, y)
             else:
@@ -114,11 +117,25 @@ class Trainer:
         from ml_studio.core.training.registry import MODEL_REGISTRY
         model_label = MODEL_REGISTRY.get(config.model_id)
         model_name = model_label.name if model_label else config.model_id
+        params = dict(config.hyperparameters)
+
+        if (
+            config.tune_method in ("optuna", "grid")
+            and config.task not in (TaskType.CLUSTERING, TaskType.ANOMALY_DETECTION)
+            and y_train is not None
+        ):
+            params = self._maybe_tune(
+                config,
+                X_train,
+                y_train,
+                model_label,
+                progress_callback,
+            )
 
         if progress_callback:
             progress_callback(30, f"Building {model_name}…")
 
-        model = get_model(config.model_id, **config.hyperparameters)
+        model = get_model(config.model_id, **params)
 
         if self._cancelled:
             raise RuntimeError("Training cancelled")
@@ -205,6 +222,100 @@ class Trainer:
             train_size=len(X_train),
             test_size=len(X_test) if len(X_test) else 0,
         )
+
+    def _maybe_tune(
+        self,
+        config: TrainingConfig,
+        X_train,
+        y_train,
+        model_label,
+        progress_callback: Callable[[int, str], None] | None,
+    ) -> dict[str, Any]:
+        """Run Optuna or grid search when a param space exists; else keep defaults."""
+        space = dict(getattr(model_label, "hyperparameters", None) or {})
+        # Drop None entries that break categorical suggest (e.g. max_depth)
+        clean_space: dict[str, list[Any]] = {}
+        for key, values in space.items():
+            if not isinstance(values, (list, tuple)) or not values:
+                continue
+            vals = [v for v in values if v is not None]
+            if vals:
+                clean_space[key] = list(vals)
+        if not clean_space:
+            if progress_callback:
+                progress_callback(28, "No tunable hyperparameters for this model — using defaults")
+            return dict(config.hyperparameters)
+
+        n_classes = y_train.nunique() if config.task == TaskType.CLASSIFICATION else None
+        cv = recommend_cv_strategy(
+            config.task,
+            len(X_train),
+            n_classes=n_classes,
+            is_time_series=config.is_time_series,
+            n_splits=min(config.cv_splits, 3),
+        )
+        scoring = self._scoring_for_task(config.task)
+
+        if config.tune_method == "optuna":
+            try:
+                from ml_studio.core.training.tuning import OptunaTuner
+            except Exception as exc:
+                logger.warning("Optuna unavailable: %s", exc)
+                if progress_callback:
+                    progress_callback(28, "Optuna not installed — skipping tuning")
+                return dict(config.hyperparameters)
+
+            if progress_callback:
+                progress_callback(25, f"Optuna tuning ({config.tune_trials} trials)…")
+            tuner = OptunaTuner(
+                config.model_id,
+                clean_space,
+                scoring=scoring,
+                n_trials=max(1, int(config.tune_trials)),
+            )
+            if self._cancelled:
+                tuner.cancel()
+
+            def tune_progress(trial_n: int, msg: str) -> None:
+                pct = 25 + min(10, int(10 * trial_n / max(config.tune_trials, 1)))
+                if progress_callback:
+                    progress_callback(pct, msg)
+
+            result = tuner.tune(X_train, y_train, cv, progress_callback=tune_progress)
+            if progress_callback:
+                progress_callback(
+                    35,
+                    f"Best tune score={result.best_score:.4f} params={result.best_params}",
+                )
+            return result.best_params
+
+        # Grid search (small spaces only)
+        from itertools import product
+
+        keys = list(clean_space.keys())
+        combos = list(product(*(clean_space[k] for k in keys)))
+        if len(combos) > 40:
+            combos = combos[:40]
+        if progress_callback:
+            progress_callback(25, f"Grid search over {len(combos)} combinations…")
+
+        best_score = float("-inf")
+        best_params: dict[str, Any] = {}
+        for i, combo in enumerate(combos):
+            if self._cancelled:
+                raise InterruptedError("Training cancelled by user")
+            params = dict(zip(keys, combo))
+            model = get_model(config.model_id, **params)
+            scores = cross_val_score(model, X_train, y_train, cv=cv, scoring=scoring, n_jobs=1)
+            score = float(np.mean(scores))
+            if score > best_score:
+                best_score = score
+                best_params = params
+            if progress_callback and i % max(1, len(combos) // 5) == 0:
+                progress_callback(25 + int(10 * (i + 1) / len(combos)), f"Grid {i+1}/{len(combos)}: {score:.4f}")
+        if progress_callback:
+            progress_callback(35, f"Best grid score={best_score:.4f}")
+        return best_params or dict(config.hyperparameters)
 
     def _scoring_for_task(self, task: TaskType) -> str:
         return {

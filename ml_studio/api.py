@@ -196,12 +196,13 @@ class Project:
         self.save()
 
     def prepare(self, pipeline: str | None = None) -> None:
-        """Run data preparation and feature engineering."""
+        """Auto pipeline from profiling — not implemented yet."""
         if not self.dataset:
             raise ValueError("Load a dataset first")
-        # TODO: Implement auto pipeline generation based on profiling
-        pass
-
+        raise NotImplementedError(
+            "api.Project.prepare() is not implemented. "
+            "Build a pipeline in the GUI Prepare page or use recipes via CLI pipeline create --recipe."
+        )
 
     def profile(self) -> dict[str, Any]:
         """Run engineering-grade data profiling and return structured JSON."""
@@ -212,8 +213,10 @@ class Project:
         return profile.to_json()
 
     def sweep(self, models: list[str], tune: str = "optuna", n_trials: int = 50, metric: str = "roc_auc", **kwargs) -> None:
-        """Queue and run hyperparameter tuning experiments."""
+        """Batch Optuna sweeper — not implemented yet."""
         if not self.dataset or not self.dataset.target_column:
             raise ValueError("Dataset and target column must be set before sweeping")
-        # TODO: Implement batch optuna sweeper
-        pass
+        raise NotImplementedError(
+            "api.Project.sweep() is not implemented. "
+            "Use the GUI Train wizard with Optuna/Grid, or call OptunaTuner from Python."
+        )

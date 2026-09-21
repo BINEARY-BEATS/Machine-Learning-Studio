@@ -1,4 +1,4 @@
-"""Project metadata and state."""
+"""Project metadata and session state."""
 
 from __future__ import annotations
 
@@ -7,6 +7,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from ml_studio.core.dataset import Dataset
+from ml_studio.core.pipeline import Pipeline
 
 
 def _utcnow() -> datetime:
@@ -18,7 +21,7 @@ class ProjectMetadata:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     name: str = "Untitled Project"
     description: str = ""
-    format_version: int = 1
+    format_version: int = 2
     created_at: datetime = field(default_factory=_utcnow)
     modified_at: datetime = field(default_factory=_utcnow)
     settings: dict[str, Any] = field(default_factory=dict)
@@ -59,10 +62,18 @@ class Project:
     metadata: ProjectMetadata
     path: Path | None = None
     dirty: bool = False
+    dataset: Dataset | None = None
+    pipeline: Pipeline | None = None
+    schema_overrides: dict[str, str] = field(default_factory=dict)
 
     @property
     def name(self) -> str:
         return self.metadata.name
+
+    @name.setter
+    def name(self, value: str) -> None:
+        self.metadata.name = value
+        self.mark_dirty()
 
     def mark_dirty(self) -> None:
         self.dirty = True
@@ -70,3 +81,8 @@ class Project:
 
     def mark_clean(self) -> None:
         self.dirty = False
+
+    def clear_session(self) -> None:
+        self.dataset = None
+        self.pipeline = None
+        self.schema_overrides = {}

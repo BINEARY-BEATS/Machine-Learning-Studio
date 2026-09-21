@@ -54,6 +54,14 @@ class HomePage(BasePage):
         self._layout.addWidget(self._empty)
         self._layout.addStretch()
 
+    def wire_empty_actions(self, new_cb, open_cb, import_cb) -> None:
+        from PyQt6.QtWidgets import QPushButton
+
+        btn = QPushButton("Import dataset")
+        btn.setObjectName("PrimaryButton")
+        btn.clicked.connect(import_cb)
+        self._empty.set_action(btn)
+
     def refresh_stats(self, controller, pages=None) -> None:
         pm = self.container.project_manager
         if pm and pm.current:
@@ -77,4 +85,8 @@ class HomePage(BasePage):
             )
 
     def on_show(self) -> None:
-        pass
+        win = self.window()
+        controller = getattr(win, "controller", None)
+        pages = getattr(win, "_pages", None)
+        if controller is not None:
+            self.refresh_stats(controller, pages)

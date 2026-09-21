@@ -5,7 +5,9 @@ from .base import BaseTransform
 
 
 class CustomPython(BaseTransform):
-    """Custom Python transform (Stub for Phase 4)."""
+    """Custom Python transform — not exposed in the GUI until implemented."""
+
+    experimental = True
 
     def __init__(self, code=""):
         super().__init__(code=code)
@@ -21,10 +23,14 @@ class CustomPython(BaseTransform):
         }
 
     def _fit(self, X: pd.DataFrame, y: pd.Series | None = None) -> None:
-        raise NotImplementedError("CustomPython transform is deferred to Phase 4.")
+        raise NotImplementedError(
+            "CustomPython is not implemented yet. Use built-in transforms from the Prepare picker."
+        )
 
     def _transform(self, X: pd.DataFrame) -> pd.DataFrame:
-        raise NotImplementedError("CustomPython transform is deferred to Phase 4.")
+        raise NotImplementedError(
+            "CustomPython is not implemented yet. Use built-in transforms from the Prepare picker."
+        )
 
     def to_dict(self) -> dict:
         return self.params.copy()

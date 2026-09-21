@@ -24,6 +24,7 @@ class PillTabs(QWidget):
         super().__init__(parent)
         self._mode = mode
         self._buttons: list[QPushButton] = []
+        self._icon_names: list[str] = []
         self._stack = QStackedWidget()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -38,6 +39,7 @@ class PillTabs(QWidget):
             btn.setIcon(themed_icon(icon_name, mode.value, "text_muted"))
             btn.clicked.connect(lambda _checked, i=index: self.set_index(i))
             self._buttons.append(btn)
+            self._icon_names.append(icon_name)
             row.addWidget(btn)
             self._stack.addWidget(page)
         row.addStretch()
@@ -47,9 +49,8 @@ class PillTabs(QWidget):
 
     def set_theme_mode(self, mode: ThemeMode) -> None:
         self._mode = mode
-        for btn in self._buttons:
-            icon_name = btn.text().lower().replace(" ", "-")
-            btn.setIcon(themed_icon(icon_name if icon_name != "quality-issues" else "missing", mode.value, "text_muted"))
+        for btn, icon_name in zip(self._buttons, self._icon_names):
+            btn.setIcon(themed_icon(icon_name, mode.value, "text_muted"))
 
     def set_index(self, index: int) -> None:
         self._stack.setCurrentIndex(index)

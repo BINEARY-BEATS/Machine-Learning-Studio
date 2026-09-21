@@ -121,9 +121,25 @@ def main():
             p.load_data(args.source)
             print(f"Loaded {p.dataset.row_count} rows into '{args.project}'.")
         elif args.subcommand == "head":
-            print(f"Not yet implemented (planned for Phase 2): Data head for {args.project} (-n {args.n})")
+            p = Project.open(args.project)
+            if not p.dataset:
+                print(f"No dataset loaded in project '{args.project}'.", file=sys.stderr)
+                sys.exit(1)
+            print(p.dataset.dataframe.head(args.n).to_string())
         elif args.subcommand == "info":
-            print(f"Not yet implemented (planned for Phase 2): Data info for {args.project}")
+            p = Project.open(args.project)
+            if not p.dataset:
+                print(f"No dataset loaded in project '{args.project}'.", file=sys.stderr)
+                sys.exit(1)
+            df = p.dataset.dataframe
+            print(f"Project: {args.project}")
+            print(f"Rows: {len(df)}")
+            print(f"Columns: {len(df.columns)}")
+            print(f"Memory: {df.memory_usage(deep=True).sum() / (1024*1024):.2f} MB")
+            print("Dtypes:")
+            print(df.dtypes.to_string())
+            if p.dataset.target_column:
+                print(f"Target: {p.dataset.target_column}")
 
     elif args.command == "profile":
         p = Project.open(args.project)

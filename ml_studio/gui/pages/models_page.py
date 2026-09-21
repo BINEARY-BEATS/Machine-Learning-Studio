@@ -84,6 +84,10 @@ class ModelsPage(BasePage):
         self._empty = EmptyState("No models registered", "Train a model to populate the registry.", icon_name="clipboard")
         self._layout.addWidget(self._empty)
 
+    def set_theme_mode(self, mode: ThemeMode) -> None:
+        self._mode = mode
+        self._empty.set_theme_mode(mode)
+
     def refresh(self, registry) -> None:
         self._registry = registry
         self._models = registry.list_models()
