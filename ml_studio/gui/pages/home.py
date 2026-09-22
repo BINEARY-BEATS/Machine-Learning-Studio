@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PyQt6.QtWidgets import QGridLayout, QHBoxLayout, QLabel, QPushButton
 
+from ml_studio.gui.layout_utils import constrain_primary_button
 from ml_studio.gui.pages.base_page import BasePage
 from ml_studio.gui.widgets.card import Card
 from ml_studio.gui.widgets.empty_state import EmptyState
@@ -17,6 +18,8 @@ class HomePage(BasePage):
         self._layout.addWidget(title)
 
         self._stats = QGridLayout()
+        self._stats.setColumnStretch(0, 1)
+        self._stats.setColumnStretch(1, 1)
         self._project_card = StatCard("Project", "None")
         self._datasets_card = StatCard("Datasets", "0")
         self._models_card = StatCard("Models", "0")
@@ -30,6 +33,7 @@ class HomePage(BasePage):
         actions = QHBoxLayout()
         self._new_btn = QPushButton("New Project")
         self._new_btn.setObjectName("PrimaryButton")
+        constrain_primary_button(self._new_btn)
         self._open_btn = QPushButton("Open Project")
         self._open_btn.setObjectName("GhostButton")
         self._import_btn = QPushButton("Import Dataset")
@@ -44,21 +48,21 @@ class HomePage(BasePage):
         self._recent_label = QLabel("No recent activity yet.")
         self._recent_label.setWordWrap(True)
         recent.add_widget(self._recent_label)
-        self._layout.addWidget(recent)
+        self._layout.addWidget(recent, 1)
 
         self._empty = EmptyState(
             "Welcome to ML Studio",
             "Create a project, import data, and start training models.",
             icon_name="home",
         )
-        self._layout.addWidget(self._empty)
-        self._layout.addStretch()
+        self._layout.addWidget(self._empty, 1)
 
     def wire_empty_actions(self, new_cb, open_cb, import_cb) -> None:
         from PyQt6.QtWidgets import QPushButton
 
         btn = QPushButton("Import dataset")
         btn.setObjectName("PrimaryButton")
+        constrain_primary_button(btn)
         btn.clicked.connect(import_cb)
         self._empty.set_action(btn)
 

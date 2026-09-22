@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 
 from ml_studio.app.metric_color import metric_color
 from ml_studio.app.theme import ThemeMode
+from ml_studio.gui.layout_utils import constrain_primary_button, configure_table_header
 from ml_studio.gui.pages.base_page import BasePage
 from ml_studio.gui.widgets.card import Card
 from ml_studio.gui.widgets.empty_state import EmptyState
@@ -27,6 +28,7 @@ from ml_studio.gui.widgets.pill_tabs import PillTabs
 from ml_studio.gui.widgets.search_bar import SearchBar
 from ml_studio.gui.widgets.tag_chip import TagChip
 from ml_studio.gui.widgets.data_table import DataFrameTableModel
+from PyQt6.QtWidgets import QSizePolicy
 
 
 class DataPage(BasePage):
@@ -44,6 +46,7 @@ class DataPage(BasePage):
         header.addStretch()
         self._import_btn = QPushButton("Import")
         self._import_btn.setObjectName("PrimaryButton")
+        constrain_primary_button(self._import_btn)
         self._optimize_btn = QPushButton("Optimize Memory")
         self._optimize_btn.setObjectName("GhostButton")
         self._profile_btn = QPushButton("Refresh Profile")
@@ -57,7 +60,13 @@ class DataPage(BasePage):
         self._table_view.setModel(self._model)
         self._table_view.setSortingEnabled(True)
         self._table_view.setAlternatingRowColors(True)
-        self._table_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self._table_view.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self._table_view.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Interactive
+        )
+        self._table_view.horizontalHeader().setStretchLastSection(True)
 
         filter_row = QHBoxLayout()
         self._search = SearchBar("Filter rows…")
@@ -69,8 +78,8 @@ class DataPage(BasePage):
         table_card = Card("Dataset table")
         table_layout = QVBoxLayout()
         table_layout.addLayout(filter_row)
-        table_layout.addWidget(self._table_view)
-        table_card.add_layout(table_layout)
+        table_layout.addWidget(self._table_view, 1)
+        table_card.add_layout(table_layout, stretch=1)
 
         self._profile_table = self._make_profile_table()
         self._issues_table = self._make_issues_table()
@@ -88,22 +97,23 @@ class DataPage(BasePage):
             "Import a CSV, Excel, Parquet, or JSON file to explore your data.",
             icon_name="import",
         )
-        # CTA wired from MainWindow to import handler
         self._empty_import_btn = QPushButton("Import dataset")
         self._empty_import_btn.setObjectName("PrimaryButton")
+        constrain_primary_button(self._empty_import_btn)
         self._empty.set_action(self._empty_import_btn)
         self._error_label = QLabel("")
         self._error_label.setObjectName("ErrorBanner")
         self._error_label.hide()
         self._layout.addWidget(self._error_label)
-        self._layout.addWidget(self._empty)
+        self._layout.addWidget(self._empty, 1)
         self._overlay = LoadingOverlay(parent=self)
 
     def _wrap(self, widget: QWidget) -> QWidget:
         box = QWidget()
         layout = QVBoxLayout(box)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(widget)
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout.addWidget(widget, 1)
         return box
 
     def _make_profile_table(self) -> QTableWidget:
@@ -112,15 +122,25 @@ class DataPage(BasePage):
         table.setHorizontalHeaderLabels(
             ["Column", "Type", "Missing", "Unique", "Min", "Max", "Mean", "Median", "Std", "Top values"]
         )
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        configure_table_header(
+            table.horizontalHeader(),
+            contents_cols=(0, 1, 2, 3),
+            stretch_cols=(9,),
+        )
+        table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         return table
 
     def _make_issues_table(self) -> QTableWidget:
         table = QTableWidget()
         table.setColumnCount(5)
         table.setHorizontalHeaderLabels(["Severity", "Type", "Column", "Details", "Action"])
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        configure_table_header(
+            table.horizontalHeader(),
+            contents_cols=(0, 1, 2, 4),
+            stretch_cols=(3,),
+        )
         table.setAlternatingRowColors(True)
+        table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         return table
 
     def set_theme_mode(self, mode: ThemeMode) -> None:

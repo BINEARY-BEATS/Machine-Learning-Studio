@@ -5,12 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -20,6 +21,7 @@ from PyQt6.QtWidgets import (
 
 from ml_studio.app.metric_color import metric_color
 from ml_studio.app.theme import ThemeMode
+from ml_studio.gui.layout_utils import constrain_primary_button, configure_table_header
 from ml_studio.gui.pages.base_page import BasePage
 from ml_studio.gui.widgets.card import Card
 from ml_studio.gui.widgets.empty_state import EmptyState
@@ -61,38 +63,61 @@ class EvaluatePage(BasePage):
         self._layout.addLayout(header)
 
         self._metric_cards = QGridLayout()
+        self._metric_cards.setColumnStretch(0, 1)
+        self._metric_cards.setColumnStretch(1, 1)
         self._primary_card = StatCard("Primary metric", metric_key="r2")
         self._cv_card = StatCard("CV mean")
         self._duration_card = StatCard("Duration")
         self._rows_card = StatCard("Train rows")
         self._metric_cards.addWidget(self._primary_card, 0, 0)
         self._metric_cards.addWidget(self._cv_card, 0, 1)
-        self._metric_cards.addWidget(self._duration_card, 1, 0)
-        self._metric_cards.addWidget(self._rows_card, 1, 1)
+        self._metric_cards.addWidget(self._duration_card, 0, 2)
+        self._metric_cards.addWidget(self._rows_card, 0, 3)
+        for col in range(4):
+            self._metric_cards.setColumnStretch(col, 1)
         self._layout.addLayout(self._metric_cards)
 
-        splitter = QSplitter()
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
         left = QWidget()
         left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.addWidget(QLabel("Experiment history"))
         self._leaderboard = QTableWidget()
         self._leaderboard.setColumnCount(7)
         self._leaderboard.setHorizontalHeaderLabels(
             ["Model", "Task", "Score", "CV", "Duration", "Dataset", "Time"]
         )
-        self._leaderboard.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        configure_table_header(
+            self._leaderboard.horizontalHeader(),
+            contents_cols=(1, 2, 3, 4, 6),
+            stretch_cols=(0, 5),
+        )
+        self._leaderboard.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         self._leaderboard.itemSelectionChanged.connect(self._on_run_selected)
-        left_layout.addWidget(self._leaderboard)
+        left_layout.addWidget(self._leaderboard, 1)
         splitter.addWidget(left)
 
         right = Card("Metric details")
         self._metrics_table = QTableWidget()
         self._metrics_table.setColumnCount(2)
         self._metrics_table.setHorizontalHeaderLabels(["Metric", "Value"])
-        self._metrics_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        right.add_widget(self._metrics_table)
+        configure_table_header(
+            self._metrics_table.horizontalHeader(),
+            contents_cols=(0,),
+            stretch_cols=(1,),
+        )
+        self._metrics_table.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        right.add_widget(self._metrics_table, stretch=1)
         splitter.addWidget(right)
-        splitter.setSizes([520, 380])
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes([640, 360])
+        self._content_splitter = splitter
         self._layout.addWidget(splitter, 1)
 
         self._empty = EmptyState(
@@ -102,9 +127,11 @@ class EvaluatePage(BasePage):
         )
         go_train = QPushButton("Go to Train")
         go_train.setObjectName("PrimaryButton")
+        constrain_primary_button(go_train)
         go_train.clicked.connect(self._goto_train)
         self._empty.set_action(go_train)
-        self._layout.addWidget(self._empty)
+        self._layout.addWidget(self._empty, 1)
+        self._refresh_leaderboard()
 
     def _goto_train(self) -> None:
         win = self.window()
@@ -152,7 +179,17 @@ class EvaluatePage(BasePage):
         return {"REGRESSION": "R²", "CLASSIFICATION": "F1", "CLUSTERING": "Silhouette"}.get(task, "Score")
 
     def _refresh_leaderboard(self) -> None:
-        self._empty.setVisible(len(self._runs) == 0)
+        empty = len(self._runs) == 0
+        self._empty.setVisible(empty)
+        self._content_splitter.setVisible(not empty)
+        # Hide metric cards row when empty by hiding widgets
+        for card in (
+            self._primary_card,
+            self._cv_card,
+            self._duration_card,
+            self._rows_card,
+        ):
+            card.setVisible(not empty)
         self._count_label.setText(f"{len(self._runs)} experiment{'s' if len(self._runs) != 1 else ''}")
         self._leaderboard.setRowCount(len(self._runs))
         for i, run in enumerate(self._runs):
@@ -213,6 +250,14 @@ class EvaluatePage(BasePage):
         if not metrics:
             return
         self._empty.hide()
+        self._content_splitter.show()
+        for card in (
+            self._primary_card,
+            self._cv_card,
+            self._duration_card,
+            self._rows_card,
+        ):
+            card.show()
         rows = []
         for key, val in metrics.items():
             if key == "confusion_matrix":

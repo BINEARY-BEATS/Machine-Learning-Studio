@@ -24,26 +24,35 @@ def window(container, qtbot):
 
 
 def test_main_window_open_project(window):
-    window.controller = MagicMock()
-    window.controller.open_project.return_value = True
+    window.controller.open_project = MagicMock(return_value=True)
     window.controller.current_dataset = None
     window._open_project()
     window.controller.open_project.assert_called_once()
 
 
 def test_main_window_new_project(window):
-    window.controller = MagicMock()
+    window.controller.new_project = MagicMock()
+    window.controller.clear_pages = MagicMock()
     window.controller.current_dataset = None
+    window.controller.registry.list_models = MagicMock(return_value=[])
     window._new_project()
     window.controller.new_project.assert_called_once()
     window.controller.clear_pages.assert_called_once()
 
 
 def test_main_window_save_project(window):
-    window.controller = MagicMock()
-    window.controller.save_project.return_value = True
+    window.controller.save_project = MagicMock(return_value=True)
     window._save_project()
     window.controller.save_project.assert_called_once()
+
+
+def test_main_window_shell_splitter_resizable(window):
+    assert hasattr(window, "_shell_splitter")
+    assert window._shell_splitter.count() == 2
+    assert window._shell_splitter.widget(0) is window._sidebar
+    assert window._shell_splitter.widget(1) is window._stack
+    # Drag-friendly: sidebar is not permanently fixed-width when expanded
+    assert window._sidebar.maximumWidth() >= window._sidebar.EXPANDED_WIDTH
 
 
 def test_main_window_worker_error_shows_toast(window):

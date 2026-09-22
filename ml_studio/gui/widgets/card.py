@@ -22,13 +22,13 @@ class Card(QFrame):
             header = QLabel(title)
             header.setObjectName("CardHeader")
             outer.addWidget(header)
-        outer.addLayout(self._body)
+        outer.addLayout(self._body, 1)
 
-    def add_widget(self, widget: QWidget) -> None:
-        self._body.addWidget(widget)
+    def add_widget(self, widget: QWidget, stretch: int = 0) -> None:
+        self._body.addWidget(widget, stretch)
 
-    def add_layout(self, layout: QHBoxLayout | QVBoxLayout) -> None:
-        self._body.addLayout(layout)
+    def add_layout(self, layout: QHBoxLayout | QVBoxLayout, stretch: int = 0) -> None:
+        self._body.addLayout(layout, stretch)
 
     def add_stretch(self) -> None:
         self._body.addStretch()

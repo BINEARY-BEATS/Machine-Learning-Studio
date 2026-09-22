@@ -28,16 +28,18 @@ class TopBar(QFrame):
 
         self._search = SearchBar("Search commands…  Ctrl+K")
         self._search.setReadOnly(True)
+        self._search.setMaximumWidth(400)
         self._search.mousePressEvent = lambda _e: self.command_palette_requested.emit()  # type: ignore[method-assign]
-        layout.addWidget(self._search, 2)
+        layout.addWidget(self._search, 0)
 
         self._breadcrumb = QLabel("ML Studio")
         self._breadcrumb.setObjectName("TextMuted")
-        layout.addWidget(self._breadcrumb, 1)
+        layout.addWidget(self._breadcrumb, 2)
 
         self._project = QLineEdit("Untitled Project")
         self._project.setObjectName("ProjectName")
         self._project.setToolTip("Project name")
+        self._project.setMaximumWidth(280)
         self._project.editingFinished.connect(self._emit_rename)
         layout.addWidget(self._project, 1)
 

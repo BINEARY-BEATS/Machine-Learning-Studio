@@ -89,3 +89,6 @@ thresh_test/
 
 logs/
 *.zip
+ml_studio/tests/gui/test_main_window_extra.py
+ml_studio/tests/gui/test_models_page.py
+.cursor/plans/ml_lab_final_upgrade_112c173f.plan.md

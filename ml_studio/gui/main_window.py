@@ -6,7 +6,15 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction, QKeySequence
-from PyQt6.QtWidgets import QApplication, QHBoxLayout, QMainWindow, QMessageBox, QStackedWidget, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QMessageBox,
+    QSplitter,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ml_studio.app.container import AppContainer
 from ml_studio.app.logger import get_logger
@@ -45,7 +53,7 @@ class MainWindow(QMainWindow):
         self._followup_profile = False
 
         self.setWindowTitle("Machine Learning Studio")
-        self.setMinimumSize(1200, 800)
+        self.setMinimumSize(900, 600)
         self.resize(1400, 900)
         self._build_ui()
         self._build_menu()
@@ -75,12 +83,6 @@ class MainWindow(QMainWindow):
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(0)
 
-        content_row = QWidget()
-        row_layout = QVBoxLayout(content_row)
-        row_layout.setContentsMargins(0, 0, 0, 0)
-
-        h = QHBoxLayout()
-        h.setSpacing(0)
         self._sidebar = Sidebar()
         self._stack = QStackedWidget()
         self._pages = {
@@ -95,16 +97,30 @@ class MainWindow(QMainWindow):
         }
         for key in PAGE_KEYS:
             self._stack.addWidget(self._pages[key])
-        h.addWidget(self._sidebar)
-        h.addWidget(self._stack, 1)
-        row_layout.addLayout(h)
-        body_layout.addWidget(content_row, 1)
+
+        self._shell_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._shell_splitter.setObjectName("ShellSplitter")
+        self._shell_splitter.setChildrenCollapsible(False)
+        self._shell_splitter.addWidget(self._sidebar)
+        self._shell_splitter.addWidget(self._stack)
+        self._shell_splitter.setStretchFactor(0, 0)
+        self._shell_splitter.setStretchFactor(1, 1)
+        self._shell_splitter.setSizes([Sidebar.EXPANDED_WIDTH, 1180])
+        self._splitter_sized = False
+        body_layout.addWidget(self._shell_splitter, 1)
         layout.addWidget(body, 1)
 
         self._status = AppStatusBar()
         self.setStatusBar(self._status)
         self._progress = TaskProgressPanel(root)
         self._toast = Toast(self)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not self._splitter_sized:
+            self._splitter_sized = True
+            content = max(400, self.width() - Sidebar.EXPANDED_WIDTH - 20)
+            self._shell_splitter.setSizes([Sidebar.EXPANDED_WIDTH, content])
 
     def _build_menu(self) -> None:
         save_action = QAction("Save", self)
@@ -129,6 +145,7 @@ class MainWindow(QMainWindow):
         self._pages["data"]._optimize_btn.clicked.connect(self._optimize_memory)
         self._pages["data"]._profile_btn.clicked.connect(self._profile_dataset)
         self._pages["train"]._train_btn.clicked.connect(self._start_training)
+        self._pages["train"].train_requested.connect(self._start_training)
         self._pages["models"]._refresh_btn.clicked.connect(
             lambda: self._pages["models"].refresh(self.controller.registry)
         )

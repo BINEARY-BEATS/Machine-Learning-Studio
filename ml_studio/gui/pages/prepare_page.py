@@ -57,6 +57,7 @@ class PreparePage(BasePage):
         self._layout.addWidget(desc)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
 
         schema_panel = QWidget()
         schema_layout = QVBoxLayout(schema_panel)
@@ -68,7 +69,7 @@ class PreparePage(BasePage):
 
         self.schema_editor = SchemaEditor()
         self.schema_editor.role_changed.connect(self._on_role_changed)
-        schema_layout.addWidget(self.schema_editor)
+        schema_layout.addWidget(self.schema_editor, 1)
 
         splitter.addWidget(schema_panel)
 
@@ -92,27 +93,30 @@ class PreparePage(BasePage):
         self._save_btn = QPushButton("Save Pipeline")
         self._save_btn.setObjectName("PrimaryButton")
         self._save_btn.clicked.connect(self._on_save_pipeline)
+        from ml_studio.gui.layout_utils import constrain_primary_button
+
+        constrain_primary_button(self._save_btn)
         pipe_header_row.addWidget(self._save_btn)
 
         pipeline_layout.addLayout(pipe_header_row)
 
         self._pipeline_list = QListWidget()
-        self._pipeline_list.setMinimumHeight(300)
         self._pipeline_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self._pipeline_list.model().rowsMoved.connect(self._on_rows_moved)
-        pipeline_layout.addWidget(self._pipeline_list)
+        pipeline_layout.addWidget(self._pipeline_list, 1)
 
         self._empty = EmptyState(
             "Build your first pipeline step",
             "Add imputation, scaling, encoding, or feature engineering steps.",
             icon_name="clean",
         )
-        pipeline_layout.addWidget(self._empty)
+        pipeline_layout.addWidget(self._empty, 1)
 
         action_row = QHBoxLayout()
 
         self._add_btn = QPushButton("Add Step")
         self._add_btn.setObjectName("PrimaryButton")
+        constrain_primary_button(self._add_btn)
         self._add_btn.clicked.connect(self._add_step)
         action_row.addWidget(self._add_btn)
 
@@ -126,13 +130,16 @@ class PreparePage(BasePage):
         self._clear_btn.setObjectName("GhostButton")
         self._clear_btn.clicked.connect(self._clear_pipeline)
         action_row.addWidget(self._clear_btn)
+        action_row.addStretch()
 
         pipeline_layout.addLayout(action_row)
 
         splitter.addWidget(pipeline_panel)
-        splitter.setSizes([400, 600])
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([480, 520])
 
-        self._layout.addWidget(splitter)
+        self._layout.addWidget(splitter, 1)
         self._refresh_ui()
 
     def set_theme_mode(self, mode: ThemeMode) -> None:

@@ -10,11 +10,11 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QFileDialog,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ml_studio.app.theme import ThemeMode
+from ml_studio.gui.layout_utils import constrain_primary_button, configure_table_header
 from ml_studio.gui.pages.base_page import BasePage
 from ml_studio.gui.widgets.card import Card
 from ml_studio.gui.widgets.empty_state import EmptyState
@@ -65,9 +66,10 @@ class PredictPage(BasePage):
         )
         go_train = QPushButton("Go to Train")
         go_train.setObjectName("PrimaryButton")
+        constrain_primary_button(go_train)
         go_train.clicked.connect(self._goto_train)
         self._empty.set_action(go_train)
-        self._layout.addWidget(self._empty)
+        self._layout.addWidget(self._empty, 1)
 
     def set_theme_mode(self, mode: ThemeMode) -> None:
         self._mode = mode
@@ -82,8 +84,9 @@ class PredictPage(BasePage):
     def _wrap(self, widget: QWidget) -> QWidget:
         box = QWidget()
         layout = QVBoxLayout(box)
-        layout.addWidget(widget)
-        layout.addStretch()
+        layout.setContentsMargins(0, 0, 0, 0)
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout.addWidget(widget, 1)
         return box
 
     def _build_single_tab(self) -> QWidget:
@@ -97,12 +100,12 @@ class PredictPage(BasePage):
         card.add_widget(self._explain_check)
         self._predict_btn = QPushButton("Predict")
         self._predict_btn.setObjectName("PrimaryButton")
+        constrain_primary_button(self._predict_btn)
         self._result_label = QLabel("")
         self._result_label.setWordWrap(True)
         card.add_widget(self._predict_btn)
         card.add_widget(self._result_label)
-        layout.addWidget(card)
-        layout.addStretch()
+        layout.addWidget(card, 1)
         return box
 
     def _build_batch_tab(self) -> QWidget:
@@ -114,13 +117,13 @@ class PredictPage(BasePage):
         self._batch_btn.setObjectName("GhostButton")
         self._batch_run = QPushButton("Run batch prediction")
         self._batch_run.setObjectName("PrimaryButton")
+        constrain_primary_button(self._batch_run)
         self._batch_btn.clicked.connect(self._pick_batch_file)
         self._batch_run.clicked.connect(self._run_batch)
         card.add_widget(self._batch_path)
         card.add_widget(self._batch_btn)
         card.add_widget(self._batch_run)
-        layout.addWidget(card)
-        layout.addStretch()
+        layout.addWidget(card, 1)
         return box
 
     def _build_explain_tab(self) -> QWidget:
@@ -136,20 +139,32 @@ class PredictPage(BasePage):
         card.add_widget(hint)
         self._explain_btn = QPushButton("Compute importance")
         self._explain_btn.setObjectName("PrimaryButton")
+        constrain_primary_button(self._explain_btn)
         self._explain_btn.clicked.connect(self._run_importance)
         card.add_widget(self._explain_btn)
         self._importance_table = QTableWidget()
         self._importance_table.setColumnCount(2)
         self._importance_table.setHorizontalHeaderLabels(["Feature", "Importance"])
-        self._importance_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch
+        configure_table_header(
+            self._importance_table.horizontalHeader(),
+            contents_cols=(0,),
+            stretch_cols=(1,),
         )
-        card.add_widget(self._importance_table)
+        self._importance_table.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self._importance_placeholder = QLabel("No importance scores yet. Click Compute importance.")
+        self._importance_placeholder.setObjectName("TextMuted")
+        self._importance_placeholder.setAlignment(
+            __import__("PyQt6.QtCore", fromlist=["Qt"]).Qt.AlignmentFlag.AlignCenter
+        )
+        card.add_widget(self._importance_placeholder)
+        card.add_widget(self._importance_table, stretch=1)
+        self._importance_table.hide()
         self._explain_status = QLabel("")
         self._explain_status.setWordWrap(True)
         card.add_widget(self._explain_status)
-        layout.addWidget(card)
-        layout.addStretch()
+        layout.addWidget(card, 1)
         return box
 
     def _build_drift_tab(self) -> QWidget:
@@ -162,8 +177,7 @@ class PredictPage(BasePage):
         )
         label.setWordWrap(True)
         card.add_widget(label)
-        layout.addWidget(card)
-        layout.addStretch()
+        layout.addWidget(card, 1)
         return box
 
     def bind_predictor(self, predictor, features: list[str], task) -> None:
@@ -291,6 +305,8 @@ class PredictPage(BasePage):
             self._explain_status.setText("Computing permutation importance…")
             scores = compute_permutation_importance(model, X, y_s, n_repeats=5)
             ranked = sorted(scores.items(), key=lambda kv: abs(kv[1]), reverse=True)
+            self._importance_placeholder.hide()
+            self._importance_table.show()
             self._importance_table.setRowCount(len(ranked))
             for i, (name, score) in enumerate(ranked):
                 self._importance_table.setItem(i, 0, QTableWidgetItem(str(name)))

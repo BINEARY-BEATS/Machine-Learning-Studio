@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QStackedWidget,
     QVBoxLayout,
@@ -22,6 +23,7 @@ from PyQt6.QtWidgets import (
 from ml_studio.core.training.registry import MODEL_REGISTRY, get_models_for_task
 from ml_studio.core.training.task import TaskType
 from ml_studio.core.training.trainer import TrainingConfig
+from ml_studio.gui.layout_utils import constrain_primary_button
 from ml_studio.gui.pages.base_page import BasePage
 from ml_studio.gui.widgets.card import Card
 from ml_studio.gui.widgets.stepper import Stepper
@@ -38,6 +40,7 @@ class TrainPage(BasePage):
         "Tune",
         "Train",
     ]
+    train_requested = pyqtSignal()
 
     def __init__(self, container, parent=None):
         self._columns: list[str] = []
@@ -58,6 +61,7 @@ class TrainPage(BasePage):
         self._back_btn.setObjectName("GhostButton")
         self._next_btn = QPushButton("Next")
         self._next_btn.setObjectName("PrimaryButton")
+        constrain_primary_button(self._next_btn)
         self._back_btn.clicked.connect(self._prev_step)
         self._next_btn.clicked.connect(self._next_step)
         nav.addWidget(self._back_btn)
@@ -65,9 +69,14 @@ class TrainPage(BasePage):
         nav.addStretch()
         self._layout.addLayout(nav)
 
+        # Hidden compatibility hook for older connections/tests
+        self._train_btn = QPushButton("Start Training")
+        self._train_btn.setObjectName("PrimaryButton")
+        self._train_btn.hide()
+        self._train_btn.clicked.connect(self.train_requested.emit)
+
         self._stack = QStackedWidget()
         self._task_combo = QComboBox()
-        # Display labels; UserRole stores TaskType.value
         task_choices = [
             (TaskType.CLASSIFICATION, "CLASSIFICATION"),
             (TaskType.REGRESSION, "REGRESSION"),
@@ -80,6 +89,9 @@ class TrainPage(BasePage):
         self._dataset_label = QLabel("Import a dataset on the Data page.")
         self._target_combo = QComboBox()
         self._feature_list = QListWidget()
+        self._feature_list.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         self._prepare_label = QLabel(
             "Optional: build a preprocessing pipeline on the Prepare page. "
             "Enabled steps will run before training."
@@ -101,10 +113,25 @@ class TrainPage(BasePage):
         self._tune_hint = QLabel("")
         self._tune_hint.setObjectName("TextMuted")
         self._tune_hint.setWordWrap(True)
-        self._summary = QLabel("")
-        self._summary.setWordWrap(True)
-        self._train_btn = QPushButton("Start Training")
-        self._train_btn.setObjectName("PrimaryButton")
+
+        self._summary_form = QFormLayout()
+        self._sum_task = QLabel("—")
+        self._sum_dataset = QLabel("—")
+        self._sum_target = QLabel("—")
+        self._sum_features = QLabel("—")
+        self._sum_model = QLabel("—")
+        self._sum_tune = QLabel("—")
+        self._sum_split = QLabel("—")
+        for label, widget in (
+            ("Task", self._sum_task),
+            ("Dataset", self._sum_dataset),
+            ("Target", self._sum_target),
+            ("Features", self._sum_features),
+            ("Model", self._sum_model),
+            ("Tuning", self._sum_tune),
+            ("Split / CV", self._sum_split),
+        ):
+            self._summary_form.addRow(f"{label}:", widget)
 
         panels = [
             self._form_panel("Task type", [("Task", self._task_combo)]),
@@ -140,7 +167,7 @@ class TrainPage(BasePage):
         box = QWidget()
         layout = QVBoxLayout(box)
         layout.addWidget(card)
-        layout.addStretch()
+        layout.addStretch(1)
         return box
 
     def _form_panel(self, title: str, rows: list[tuple[str, QWidget]]) -> QWidget:
@@ -153,25 +180,27 @@ class TrainPage(BasePage):
         layout = QVBoxLayout(box)
         layout.addWidget(card)
         if title == "Target & features":
-            layout.addWidget(self._feature_list)
-        layout.addStretch()
+            layout.addWidget(self._feature_list, 1)
+        else:
+            layout.addStretch(1)
         return box
 
     def _wrap(self, widget: QWidget) -> QWidget:
         box = QWidget()
         layout = QVBoxLayout(box)
         layout.addWidget(widget)
-        layout.addStretch()
+        layout.addStretch(1)
         return box
 
     def _train_panel(self) -> QWidget:
         card = Card("Training summary")
-        card.add_widget(self._summary)
-        card.add_widget(self._train_btn)
+        card.add_layout(self._summary_form)
+        hint = QLabel("Click Start Training in the wizard bar above to begin.")
+        hint.setObjectName("TextMuted")
+        card.add_widget(hint)
         box = QWidget()
         layout = QVBoxLayout(box)
-        layout.addWidget(card)
-        layout.addStretch()
+        layout.addWidget(card, 1)
         return box
 
     def on_show(self) -> None:
@@ -268,7 +297,6 @@ class TrainPage(BasePage):
         )
 
     def validate_step(self, index: int) -> str | None:
-        """Return an error message if the step is incomplete, else None."""
         if index <= 0:
             return None
         if index >= 1 and not self._columns:
@@ -307,7 +335,6 @@ class TrainPage(BasePage):
         for meta in models:
             self._model_combo.addItem(meta.name)
         if not models and task == TaskType.TIME_SERIES:
-            # Fall back to regression models with a note
             for meta in get_models_for_task(TaskType.REGRESSION):
                 self._model_combo.addItem(meta.name)
         self._on_model_or_tune_changed()
@@ -336,22 +363,27 @@ class TrainPage(BasePage):
     def _refresh_summary(self) -> None:
         config = self.build_config()
         if not config:
-            self._summary.setText("Select target and at least one feature column.")
+            self._sum_task.setText("—")
+            self._sum_dataset.setText(self._dataset_name)
+            self._sum_target.setText("Select target and features")
+            self._sum_features.setText("—")
+            self._sum_model.setText("—")
+            self._sum_tune.setText("—")
+            self._sum_split.setText("—")
             return
-        tune = config.tune_method
         tune_txt = {
             "none": "None",
             "grid": "Grid search",
             "optuna": f"Optuna ({config.tune_trials} trials)",
-        }.get(tune, tune)
-        self._summary.setText(
-            f"Task: {config.task.value}\n"
-            f"Dataset: {self._dataset_name}\n"
-            f"Target: {config.target_column}\n"
-            f"Features: {len(config.feature_columns)}\n"
-            f"Model: {self._model_combo.currentText()}\n"
-            f"Tuning: {tune_txt}\n"
-            f"Test split: {config.test_size:.0%}  ·  CV: {config.cv_splits}-fold"
+        }.get(config.tune_method, config.tune_method)
+        self._sum_task.setText(config.task.value)
+        self._sum_dataset.setText(self._dataset_name)
+        self._sum_target.setText(config.target_column)
+        self._sum_features.setText(str(len(config.feature_columns)))
+        self._sum_model.setText(self._model_combo.currentText())
+        self._sum_tune.setText(tune_txt)
+        self._sum_split.setText(
+            f"{config.test_size:.0%} test · {config.cv_splits}-fold CV"
         )
 
     def _on_step_clicked(self, index: int) -> None:
@@ -368,7 +400,6 @@ class TrainPage(BasePage):
             self._refresh_prepare_label()
         self._stack.setCurrentIndex(index)
         self._stepper.set_current(index)
-        # On last step, primary action is training
         if index >= len(self.STEPS) - 1:
             self._next_btn.setText("Start Training")
         else:
@@ -377,7 +408,7 @@ class TrainPage(BasePage):
     def _next_step(self) -> None:
         idx = self._stepper.current_index()
         if idx >= len(self.STEPS) - 1:
-            self._train_btn.click()
+            self.train_requested.emit()
             return
         nxt = idx + 1
         err = self.validate_step(nxt)
@@ -397,7 +428,6 @@ class TrainPage(BasePage):
         data = self._task_combo.currentData()
         if data:
             return TaskType(data)
-        # Fallback if text still looks like enum value
         text = self._task_combo.currentText().split(" ")[0]
         return TaskType(text)
 

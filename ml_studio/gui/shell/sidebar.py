@@ -3,7 +3,16 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, pyqtSignal
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ml_studio.app.icon_provider import themed_icon
 from ml_studio.app.theme import ThemeMode
@@ -17,6 +26,7 @@ class Sidebar(QFrame):
     navigate = pyqtSignal(str)
     EXPANDED_WIDTH = 220
     COLLAPSED_WIDTH = 64
+    MAX_WIDTH = 320
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -24,7 +34,11 @@ class Sidebar(QFrame):
         self._mode = ThemeMode.LIGHT
         self._collapsed = False
         self._buttons: dict[str, QPushButton] = {}
-        self.setFixedWidth(self.EXPANDED_WIDTH)
+        self._section_labels: list[QLabel] = []
+        self.setMinimumWidth(self.COLLAPSED_WIDTH)
+        self.setMaximumWidth(self.MAX_WIDTH)
+        self.resize(self.EXPANDED_WIDTH, self.height())
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(SPACE[2], SPACE[3], SPACE[2], SPACE[3])
@@ -60,6 +74,7 @@ class Sidebar(QFrame):
                 current_section = item.section
                 section_label = QLabel(current_section.upper())
                 section_label.setObjectName("NavSection")
+                self._section_labels.append(section_label)
                 self._body_layout.addWidget(section_label)
             btn = QPushButton(item.label)
             btn.setObjectName("NavButton")
@@ -89,17 +104,46 @@ class Sidebar(QFrame):
         self.set_active(key)
         self.navigate.emit(key)
 
+    def sizeHint(self):
+        from PyQt6.QtCore import QSize
+
+        w = self.COLLAPSED_WIDTH if self._collapsed else self.EXPANDED_WIDTH
+        return QSize(w, super().sizeHint().height())
+
     def toggle_collapse(self) -> None:
         self._collapsed = not self._collapsed
         target = self.COLLAPSED_WIDTH if self._collapsed else self.EXPANDED_WIDTH
         self._collapse_btn.setText("»" if self._collapsed else "«")
         self._title.setVisible(not self._collapsed)
+        for label in self._section_labels:
+            label.setVisible(not self._collapsed)
         for item in NAV_ITEMS:
             self._buttons[item.key].setText("" if self._collapsed else item.label)
+
+        if self._collapsed:
+            self.setMaximumWidth(self.COLLAPSED_WIDTH)
+        else:
+            self.setMaximumWidth(self.MAX_WIDTH)
+
         anim = QPropertyAnimation(self, b"minimumWidth", self)
         anim.setDuration(MOTION["normal"])
+        anim.setStartValue(self.width())
         anim.setEndValue(target)
         anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+        def _finish() -> None:
+            self.setMinimumWidth(self.COLLAPSED_WIDTH)
+            if self._collapsed:
+                self.setMaximumWidth(self.COLLAPSED_WIDTH)
+            else:
+                self.setMaximumWidth(self.MAX_WIDTH)
+            parent = self.parent()
+            if parent is not None and hasattr(parent, "setSizes"):
+                sizes = parent.sizes()
+                if len(sizes) >= 2:
+                    total = sum(sizes)
+                    parent.setSizes([target, max(total - target, 100)])
+
+        anim.finished.connect(_finish)
         anim.start()
-        self.setMaximumWidth(target)
-        self.setFixedWidth(target)
+        self._width_anim = anim  # keep reference
