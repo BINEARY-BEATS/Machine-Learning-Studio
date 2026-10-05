@@ -64,7 +64,7 @@ class PreparePage(BasePage):
         schema_layout.setContentsMargins(0, 0, 0, 0)
 
         schema_header = QLabel("Dataset Schema")
-        schema_header.setStyleSheet("font-weight: bold; font-size: 14px;")
+        schema_header.setObjectName("SectionHeader")
         schema_layout.addWidget(schema_header)
 
         self.schema_editor = SchemaEditor()
@@ -79,7 +79,7 @@ class PreparePage(BasePage):
 
         pipe_header_row = QHBoxLayout()
         pipe_header = QLabel("Pipeline Steps")
-        pipe_header.setStyleSheet("font-weight: bold; font-size: 14px;")
+        pipe_header.setObjectName("SectionHeader")
         pipe_header_row.addWidget(pipe_header)
 
         self._status = TagChip("0 steps", "info")
@@ -303,7 +303,11 @@ class PreparePage(BasePage):
             if recipe_path.exists():
                 with open(recipe_path, encoding="utf-8") as f:
                     data = yaml.safe_load(f) or {}
-                desc = data.get("metadata", {}).get("description", desc)
+                desc = (
+                    data.get("description")
+                    or (data.get("metadata") or {}).get("description")
+                    or desc
+                )
 
             reply = QMessageBox.question(
                 self,
