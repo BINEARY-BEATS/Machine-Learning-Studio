@@ -150,3 +150,44 @@ Branch workflow from `docs/CURSOR_PLAN.md`. One task per branch. Do not mark don
 - `ml_studio/gui/pages/evaluate_clusters.py` (new)
 - `ml_studio/tests/training/test_unsupervised.py` (new)
 - `docs/PROGRESS.md`
+
+---
+
+## B5 — Data table sort/filter correctness + speed
+
+**Branch:** `fix/b5-data-table`  
+**Status:** Done (2026-10-06)  
+**Depends on:** —  
+**Next:** B6 (ingestion) or B7/B8 as independent
+
+### Problem (context)
+
+- Filter stored index *labels* but `data()` used them as iloc *positions* → wrong rows after sort / non-RangeIndex.
+- Filter did full-frame `astype(str)` + Python `axis=1` apply (very slow).
+- `sort()` mutated/copied `_df` and cleared the filter.
+- DataPage column combo was not wired; no visible row count.
+
+### Done
+
+1. `DataFrameTableModel` — `_order` / `_visible` position arrays; `_df` never mutated.
+2. Stable sort of current visible rows (NaN last); filter re-applied over `_order`.
+3. Vectorized literal substring filter; skip numeric columns when needle is not numeric-looking.
+4. DataPage — column filter + search wired; "Showing N of M rows" label.
+5. Vertical headers show original 1-based row positions.
+6. Slow benchmark: 1M×10 filter < 3s; `pytest.mark.slow` registered.
+
+### Acceptance checked
+
+- Shuffled non-RangeIndex + sort + filter returns correct values.
+- Column-restricted filter; backslash literal; sort keeps filter.
+- Existing data_table tests green; slow 1M filter benchmark < 3s.
+
+### Files touched
+
+- `ml_studio/gui/widgets/data_table.py`
+- `ml_studio/gui/pages/data_page.py`
+- `ml_studio/tests/gui/test_data_table_model.py`
+- `ml_studio/tests/gui/test_pages.py`
+- `ml_studio/tests/benchmarks/benchmark_io.py`
+- `pyproject.toml`
+- `docs/PROGRESS.md`

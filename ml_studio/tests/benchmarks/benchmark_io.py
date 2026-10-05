@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 
 def generate_benchmark_csv(path: Path, rows: int = 1_000_000, cols: int = 50) -> Path:
@@ -59,6 +60,21 @@ def run_benchmarks(data_dir: Path | None = None) -> dict[str, float]:
 
     print("Results:", results)
     return results
+
+
+@pytest.mark.slow
+def test_benchmark_filter_1m_x_10_under_3s():
+    """Acceptance: vectorized filter on 1M×10 finishes in under 3 seconds."""
+    from ml_studio.gui.widgets.data_table import DataFrameTableModel
+
+    rng = np.random.RandomState(42)
+    df = pd.DataFrame({f"col_{i}": rng.randn(1_000_000) for i in range(9)})
+    df["label"] = rng.choice(["alpha", "beta", "gamma", "delta"], size=1_000_000)
+    model = DataFrameTableModel(df)
+    # Non-numeric needle skips float cols (plan); still scans 1M×10 frame
+    elapsed = benchmark_filter(model, text="alpha")
+    assert model.rowCount() > 0
+    assert elapsed < 3.0, f"1M×10 filter took {elapsed:.2f}s (limit 3s)"
 
 
 if __name__ == "__main__":

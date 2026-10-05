@@ -70,11 +70,15 @@ class DataPage(BasePage):
 
         filter_row = QHBoxLayout()
         self._search = SearchBar("Filter rows…")
-        self._search.search_changed.connect(self._model.apply_filter)
+        self._search.search_changed.connect(self._on_filter_changed)
         self._column_filter = QComboBox()
         self._column_filter.addItem("All columns")
+        self._column_filter.currentIndexChanged.connect(self._on_filter_changed)
+        self._row_count_label = QLabel("Showing 0 of 0 rows")
+        self._row_count_label.setObjectName("Breadcrumb")
         filter_row.addWidget(self._search, 3)
         filter_row.addWidget(self._column_filter, 1)
+        filter_row.addWidget(self._row_count_label)
         table_card = Card("Dataset table")
         table_layout = QVBoxLayout()
         table_layout.addLayout(filter_row)
@@ -178,14 +182,35 @@ class DataPage(BasePage):
             self._empty.show()
             self._tabs.hide()
             self._clear_profile_tables()
+            self._update_row_count_label()
             return
         self._empty.hide()
         self._tabs.show()
         self._model.set_dataframe(dataset.dataframe)
+        self._column_filter.blockSignals(True)
         self._column_filter.clear()
         self._column_filter.addItem("All columns")
         self._column_filter.addItems([str(c) for c in dataset.dataframe.columns])
+        self._column_filter.blockSignals(False)
+        self._search.blockSignals(True)
+        self._search.clear()
+        self._search.blockSignals(False)
+        self._update_row_count_label()
         self._clear_profile_tables()
+
+    def _filter_column_name(self) -> str | None:
+        if self._column_filter.currentIndex() <= 0:
+            return None
+        return self._column_filter.currentText()
+
+    def _on_filter_changed(self, *_args) -> None:
+        self._model.apply_filter(self._search.text(), column=self._filter_column_name())
+        self._update_row_count_label()
+
+    def _update_row_count_label(self) -> None:
+        shown = self._model.visible_rows
+        total = self._model.total_rows
+        self._row_count_label.setText(f"Showing {shown:,} of {total:,} rows")
 
     def _clear_profile_tables(self) -> None:
         self._profile_table.setRowCount(0)

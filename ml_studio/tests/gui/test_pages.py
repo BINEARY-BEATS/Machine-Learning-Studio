@@ -39,6 +39,22 @@ def test_data_page_set_dataset(qtbot, container):
     mock_dataset.column_count = 2
     page.set_dataset(mock_dataset)
     assert page._dataset is mock_dataset
+    assert "Showing 2 of 2 rows" in page._row_count_label.text()
+
+
+def test_data_page_column_filter(qtbot, container):
+    page = DataPage(container)
+    qtbot.addWidget(page)
+    mock_dataset = MagicMock()
+    mock_dataset.dataframe = pd.DataFrame(
+        {"name": ["Alice", "Bob"], "city": ["Austin", "Boston"]}
+    )
+    page.set_dataset(mock_dataset)
+    page._column_filter.setCurrentText("city")
+    page._search.setText("Bos")
+    page._on_filter_changed()
+    assert page._model.rowCount() == 1
+    assert "Showing 1 of 2 rows" in page._row_count_label.text()
 
 def test_train_page_set_dataset(qtbot, container):
     page = TrainPage(container)

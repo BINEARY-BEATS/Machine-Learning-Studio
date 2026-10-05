@@ -40,6 +40,9 @@ testpaths = ["ml_studio/tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
 filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "slow: long-running benchmarks (deselect with '-m \"not slow\"')",
+]
 
 [tool.coverage.run]
 source = ["ml_studio/core"]
