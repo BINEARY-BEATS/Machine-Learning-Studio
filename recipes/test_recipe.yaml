@@ -1,7 +1,0 @@
-steps:
-- params:
-    columns: '@numeric'
-  transform: Standard
-- params:
-    columns: '@categorical'
-  transform: OneHot
