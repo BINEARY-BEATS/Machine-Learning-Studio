@@ -62,6 +62,10 @@ class InferencePipeline:
 
     def predict(self, X: pd.DataFrame):
         Xt = self.transform(X)
+        if self.task in (TaskType.CLUSTERING, TaskType.ANOMALY_DETECTION):
+            from ml_studio.core.training.unsupervised import predict_new
+
+            return predict_new(self.estimator, Xt)
         raw = self.estimator.predict(Xt)
         return self.decode(raw)
 

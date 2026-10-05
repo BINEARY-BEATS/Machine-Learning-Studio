@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSplitter,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -23,9 +24,12 @@ from ml_studio.app.metric_color import metric_color
 from ml_studio.app.theme import ThemeMode
 from ml_studio.gui.layout_utils import constrain_primary_button, configure_table_header
 from ml_studio.gui.pages.base_page import BasePage
+from ml_studio.gui.pages.evaluate_clusters import build_clusters_table, fill_clusters_table
 from ml_studio.gui.widgets.card import Card
 from ml_studio.gui.widgets.empty_state import EmptyState
 from ml_studio.gui.widgets.stat_card import StatCard
+
+_SKIP_METRIC_KEYS = frozenset({"confusion_matrix", "cluster_profile"})
 
 
 @dataclass
@@ -103,6 +107,10 @@ class EvaluatePage(BasePage):
         splitter.addWidget(left)
 
         right = Card("Metric details")
+        self._detail_tabs = QTabWidget()
+        metrics_tab = QWidget()
+        metrics_layout = QVBoxLayout(metrics_tab)
+        metrics_layout.setContentsMargins(0, 0, 0, 0)
         self._metrics_table = QTableWidget()
         self._metrics_table.setColumnCount(2)
         self._metrics_table.setHorizontalHeaderLabels(["Metric", "Value"])
@@ -114,11 +122,15 @@ class EvaluatePage(BasePage):
         self._metrics_table.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
-        right.add_widget(self._metrics_table, stretch=1)
+        metrics_layout.addWidget(self._metrics_table, 1)
         self._plot_host = QWidget()
         self._plot_layout = QVBoxLayout(self._plot_host)
         self._plot_layout.setContentsMargins(0, 0, 0, 0)
-        right.add_widget(self._plot_host, stretch=1)
+        metrics_layout.addWidget(self._plot_host, 1)
+        self._detail_tabs.addTab(metrics_tab, "Metrics")
+        self._clusters_table = build_clusters_table()
+        self._detail_tabs.addTab(self._clusters_table, "Clusters")
+        right.add_widget(self._detail_tabs, stretch=1)
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
@@ -260,9 +272,18 @@ class EvaluatePage(BasePage):
         self._duration_card.set_value(f"{run.duration_sec:.1f}s")
         self._rows_card.set_value(f"{run.train_rows:,}")
 
+        self._fill_metrics_table(run.metrics, run.task)
+        fill_clusters_table(self._clusters_table, run.metrics.get("cluster_profile"))
+        has_clusters = bool(run.metrics.get("cluster_profile"))
+        self._detail_tabs.setTabVisible(1, has_clusters)
+        if has_clusters:
+            self._detail_tabs.setCurrentIndex(1 if run.task == "CLUSTERING" else 0)
+        self._update_plots(run)
+
+    def _fill_metrics_table(self, metrics: dict, task: str) -> None:
         rows: list[tuple[str, str, object]] = []
-        for key, val in run.metrics.items():
-            if key == "confusion_matrix":
+        for key, val in metrics.items():
+            if key in _SKIP_METRIC_KEYS:
                 continue
             if isinstance(val, float):
                 rows.append((key, f"{val:.4f}", val))
@@ -273,11 +294,9 @@ class EvaluatePage(BasePage):
             self._metrics_table.setItem(i, 0, QTableWidgetItem(key))
             item = QTableWidgetItem(text)
             if isinstance(raw, float):
-                color = metric_color(self._mode, key, raw, run.task)
+                color = metric_color(self._mode, key, raw, task)
                 item.setForeground(__import__("PyQt6.QtGui", fromlist=["QColor"]).QColor(color))
             self._metrics_table.setItem(i, 1, item)
-
-        self._update_plots(run)
 
     def _update_plots(self, run: ExperimentRun) -> None:
         while self._plot_layout.count():
@@ -318,22 +337,9 @@ class EvaluatePage(BasePage):
             self._rows_card,
         ):
             card.show()
-        rows = []
-        for key, val in metrics.items():
-            if key == "confusion_matrix":
-                continue
-            if isinstance(val, float):
-                rows.append((key, f"{val:.4f}", val))
-            else:
-                rows.append((key, str(val), val))
-        self._metrics_table.setRowCount(len(rows))
-        for i, (key, text, raw) in enumerate(rows):
-            self._metrics_table.setItem(i, 0, QTableWidgetItem(key))
-            item = QTableWidgetItem(text)
-            if isinstance(raw, float):
-                color = metric_color(self._mode, key, raw, "REGRESSION")
-                item.setForeground(__import__("PyQt6.QtGui", fromlist=["QColor"]).QColor(color))
-            self._metrics_table.setItem(i, 1, item)
+        self._fill_metrics_table(metrics, "REGRESSION")
+        fill_clusters_table(self._clusters_table, metrics.get("cluster_profile"))
+        self._detail_tabs.setTabVisible(1, bool(metrics.get("cluster_profile")))
         primary = metrics.get("r2") or metrics.get("f1") or metrics.get("accuracy")
         self._primary_card.set_value(
             f"{primary:.4f}" if isinstance(primary, float) else "—",

@@ -5,9 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+import pandas as pd
 from sklearn.metrics import (
     accuracy_score,
     confusion_matrix,
+    davies_bouldin_score,
     f1_score,
     mean_absolute_error,
     mean_squared_error,
@@ -36,7 +38,7 @@ def compute_metrics(
     if task == TaskType.CLUSTERING:
         return _clustering_metrics(X, y_pred, model)
     if task == TaskType.ANOMALY_DETECTION:
-        return _anomaly_metrics(y_pred)
+        return _anomaly_metrics(y_pred, X=X, model=model)
     if task == TaskType.TIME_SERIES:
         return _regression_metrics(y_true, y_pred)
     return {}
@@ -64,7 +66,6 @@ def _classification_metrics(y_true, y_pred, y_proba=None) -> dict[str, Any]:
         if hasattr(y_true, "value_counts"):
             majority = y_true.value_counts().iloc[0]
         else:
-            import pandas as pd
             majority = pd.Series(y_true).value_counts().iloc[0]
         metrics["baseline_accuracy"] = float(majority / len(y_true))
     else:
@@ -78,26 +79,80 @@ def _classification_metrics(y_true, y_pred, y_proba=None) -> dict[str, Any]:
 
 
 def _clustering_metrics(X, labels, model) -> dict[str, Any]:
-    unique = np.unique(labels)
-    unique = unique[unique >= 0] if hasattr(labels, "__iter__") else unique
+    labels = np.asarray(labels)
+    non_noise = labels[labels >= 0]
+    unique = np.unique(non_noise)
     result: dict[str, Any] = {
         "n_clusters": int(len(unique)),
         "cluster_sizes": {int(k): int(np.sum(labels == k)) for k in unique},
+        "noise_ratio": float(np.mean(labels == -1)) if len(labels) else 0.0,
     }
-    if X is not None and len(unique) >= 2:
+    valid = labels >= 0
+    n_valid_clusters = len(np.unique(labels[valid])) if valid.any() else 0
+    if X is not None and n_valid_clusters >= 2 and int(valid.sum()) >= 2:
+        X_arr = X.iloc[valid] if isinstance(X, pd.DataFrame) else np.asarray(X)[valid]
+        y_arr = labels[valid]
         try:
-            result["silhouette"] = float(silhouette_score(X, labels))
+            result["silhouette"] = float(silhouette_score(X_arr, y_arr))
+        except Exception:
+            pass
+        try:
+            result["davies_bouldin"] = float(davies_bouldin_score(X_arr, y_arr))
         except Exception:
             pass
     if model is not None and hasattr(model, "inertia_"):
         result["inertia"] = float(model.inertia_)
+    result["cluster_profile"] = _cluster_profile(X, labels, unique)
     return result
 
 
-def _anomaly_metrics(labels) -> dict[str, Any]:
-    anomalies = int(np.sum(labels == -1)) if labels is not None else 0
-    total = len(labels) if labels is not None else 0
-    return {
+def _cluster_profile(X, labels, unique) -> list[dict[str, Any]]:
+    profile: list[dict[str, Any]] = []
+    labels = np.asarray(labels)
+    for k in unique:
+        mask = labels == k
+        entry: dict[str, Any] = {"cluster": int(k), "size": int(mask.sum()), "means": {}}
+        if X is None or not mask.any():
+            profile.append(entry)
+            continue
+        if isinstance(X, pd.DataFrame):
+            sub = X.iloc[mask]
+            for col in sub.columns:
+                if pd.api.types.is_numeric_dtype(sub[col]):
+                    entry["means"][str(col)] = float(sub[col].mean())
+        else:
+            arr = np.asarray(X)[mask]
+            for j in range(arr.shape[1]):
+                entry["means"][f"f{j}"] = float(np.mean(arr[:, j]))
+        profile.append(entry)
+    return profile
+
+
+def _anomaly_metrics(labels, X=None, model=None) -> dict[str, Any]:
+    labels = np.asarray(labels) if labels is not None else np.array([])
+    anomalies = int(np.sum(labels == -1)) if len(labels) else 0
+    total = len(labels)
+    result = {
         "anomaly_count": anomalies,
-        "anomaly_ratio": anomalies / total if total else 0,
+        "anomaly_ratio": anomalies / total if total else 0.0,
     }
+    scores = _anomaly_scores(model, X)
+    if scores is not None and len(scores):
+        result["score_mean"] = float(np.mean(scores))
+        result["score_std"] = float(np.std(scores))
+        result["score_min"] = float(np.min(scores))
+        result["score_max"] = float(np.max(scores))
+    return result
+
+
+def _anomaly_scores(model, X) -> np.ndarray | None:
+    if model is None or X is None:
+        return None
+    try:
+        if hasattr(model, "decision_function"):
+            return np.asarray(model.decision_function(X), dtype=float)
+        if hasattr(model, "score_samples"):
+            return np.asarray(model.score_samples(X), dtype=float)
+    except Exception:
+        return None
+    return None

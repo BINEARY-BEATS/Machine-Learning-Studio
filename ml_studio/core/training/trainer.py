@@ -221,11 +221,13 @@ class Trainer:
 
     def _fit_and_eval(self, model, name, config, preprocessing, params, b, cb):
         if config.task in _UNSUPERVISED:
+            from ml_studio.core.training.unsupervised import fit_predict_labels
+
             self._check_cancel()
             self._emit(cb, 55, f"Fitting {name} on {len(b['X_train']):,} samples…")
-            model.fit(b["X_train"])
+            labels = fit_predict_labels(model, b["X_train"])
             self._check_cancel()
-            return np.array([]), model.predict(b["X_train"]), None
+            return np.array([]), labels, None
         cv_arr = self._run_cv(
             config, params, preprocessing, b["X_train_raw"], b["y_train_raw"], cb
         )

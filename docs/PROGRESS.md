@@ -108,3 +108,45 @@ Branch workflow from `docs/CURSOR_PLAN.md`. One task per branch. Do not mark don
 
 - Categorical combobox from schema; invalid numeric flagged; decoded label + bars; preflight lists missing columns.
 - Existing predict/pages/workers tests updated and green.
+
+---
+
+## B4 — DBSCAN / unsupervised fixes
+
+**Branch:** `fix/b4-dbscan`  
+**Status:** Done (2026-10-06)  
+**Depends on:** B1  
+**Next:** B5 (data table) or B6/B8 as independent; F1 after B1–B2
+
+### Problem (context)
+
+- Trainer called `model.predict` after fit for clustering/anomaly; DBSCAN has no `predict` → crash despite being in the registry.
+- Silhouette included noise label `-1`.
+- `InferencePipeline.predict` assumed every estimator exposes `predict`.
+- No cluster profile UI; anomaly metrics lacked score summaries.
+
+### Done
+
+1. `core/training/unsupervised.py` — `fit_predict_labels` / `predict_new` (DBSCAN nearest-core ≤ eps else `-1`; LOF novelty-safe).
+2. `trainer.py` + `InferencePipeline.predict` use the helpers for unsupervised tasks.
+3. `metrics.py` — noise-excluded silhouette/DBI, `noise_ratio`, `cluster_profile`, anomaly `score_*` from `decision_function` / `score_samples`.
+4. EvaluatePage — Metrics / Clusters tabs via `evaluate_clusters.py`.
+5. Tests: `tests/training/test_unsupervised.py`.
+
+### Acceptance checked
+
+- DBSCAN trains on blobs; `noise_ratio` present; far point → `-1`.
+- KMeans/GMM silhouette + cluster counts OK.
+- IsolationForest/LOF `anomaly_count` > 0; IF score summary present.
+- 31 related training/evaluation/inference tests green.
+
+### Files touched
+
+- `ml_studio/core/training/unsupervised.py` (new)
+- `ml_studio/core/training/trainer.py`
+- `ml_studio/core/evaluation/metrics.py`
+- `ml_studio/core/persistence/serializer.py`
+- `ml_studio/gui/pages/evaluate_page.py`
+- `ml_studio/gui/pages/evaluate_clusters.py` (new)
+- `ml_studio/tests/training/test_unsupervised.py` (new)
+- `docs/PROGRESS.md`
