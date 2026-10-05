@@ -150,26 +150,35 @@ class Pipeline(BaseEstimator, TransformerMixin):
                     X_curr = step.transform(X_curr)
         return X_curr
 
-    def to_dict(self) -> dict:
-        """Serialize pipeline to dict."""
-        return {
-            "steps": [
-                {
-                    "class": step.__class__.__name__,
-                    "state": step.to_dict(),
-                    "enabled": getattr(step, "enabled", True),
-                }
-                for step in self.steps
-            ]
-        }
+    def to_dict(self, include_state: bool = True) -> dict:
+        """Serialize pipeline. Project persistence uses include_state=False."""
+        from ml_studio.core.serialization import to_jsonable
+
+        steps = []
+        for step in self.steps:
+            entry: dict[str, Any] = {
+                "class": step.__class__.__name__,
+                "enabled": getattr(step, "enabled", True),
+                "params": to_jsonable(dict(step.params)),
+            }
+            if include_state:
+                entry["state"] = to_jsonable(step.to_dict())
+            steps.append(entry)
+        return {"steps": steps}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Pipeline":
-        """Reconstruct from dict."""
+        """Reconstruct from dict. Missing state => unfitted steps."""
         steps = []
         for step_data in d.get("steps", []):
             step_class = get_transform(step_data["class"])
-            step_obj = step_class.from_dict(step_data["state"])
+            state = step_data.get("state")
+            if state:
+                step_obj = step_class.from_dict(state)
+            else:
+                params = dict(step_data.get("params") or {})
+                step_obj = step_class(**params)
+                step_obj._is_fitted = False
             step_obj.enabled = step_data.get("enabled", True)
             steps.append(step_obj)
         return cls(steps=steps)

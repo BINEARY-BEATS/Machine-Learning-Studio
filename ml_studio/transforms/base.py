@@ -1,9 +1,19 @@
-"""Base Transform Interface."""
+"""Base Transform Interface.
+
+Fitted sklearn / numeric state is persisted with model artifacts via joblib.
+Project JSON stores pipeline class + params only (unfitted); do not rely on
+``from_dict`` restoring a transform that was never fully serialized.
+"""
 
 from abc import ABC, abstractmethod
 from typing import Any
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
+
+
+def mark_fitted(obj: "BaseTransform", ready: bool) -> None:
+    """Set ``_is_fitted`` only when transform state is actually usable."""
+    obj._is_fitted = bool(ready)
 
 
 class BaseTransform(BaseEstimator, TransformerMixin, ABC):

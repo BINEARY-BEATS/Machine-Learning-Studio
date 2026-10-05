@@ -41,8 +41,10 @@ def write_session(
             json.dump(meta, f, indent=2)
 
     if pipeline is not None and pipeline.steps:
+        from ml_studio.core.serialization import to_jsonable
+
         with (staging / PIPELINE_FILE).open("w", encoding="utf-8") as f:
-            json.dump(pipeline.to_dict(), f, indent=2)
+            json.dump(to_jsonable(pipeline.to_dict(include_state=False)), f, indent=2)
 
     session = {
         "schema_overrides": schema_overrides or {},

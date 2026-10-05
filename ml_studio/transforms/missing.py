@@ -79,16 +79,22 @@ class Impute(BaseTransform):
         return X
 
     def to_dict(self) -> dict:
+        from ml_studio.core.serialization import to_jsonable
+
         d = self.params.copy()
-        if self.strategy == "knn":
-            # Can't easily serialize KNNImputer without joblib, so we don't fully support saving it in JSON here yet
-            pass
-        d["imputers_"] = self.imputers_
+        if self.strategy == "knn" and hasattr(self, "imputer"):
+            d["knn_fit_X_"] = to_jsonable(getattr(self.imputer, "_fit_X", None))
+            d["knn_mask_fit_X_"] = to_jsonable(getattr(self.imputer, "_mask_fit_X", None))
+            d["knn_valid_mask_"] = to_jsonable(getattr(self.imputer, "_valid_mask", None))
+            d["knn_n_features_in_"] = int(getattr(self.imputer, "n_features_in_", 0))
+        d["imputers_"] = to_jsonable(self.imputers_)
         d["fitted_columns_"] = self.fitted_columns_
         return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "BaseTransform":
+        from ml_studio.transforms.base import mark_fitted
+
         obj = cls(
             strategy=d.get("strategy", "median"), 
             columns=d.get("columns", None), 
@@ -97,7 +103,28 @@ class Impute(BaseTransform):
         )
         obj.imputers_ = d.get("imputers_", {})
         obj.fitted_columns_ = d.get("fitted_columns_", [])
-        obj._is_fitted = True
+        if obj.strategy == "knn":
+            ready = d.get("knn_fit_X_") is not None and bool(obj.fitted_columns_)
+            if ready:
+                obj.imputer = KNNImputer(n_neighbors=obj.knn_neighbors)
+                fit_x = np.asarray(d["knn_fit_X_"], dtype=float)
+                obj.imputer._fit_X = fit_x
+                mask = d.get("knn_mask_fit_X_")
+                obj.imputer._mask_fit_X = (
+                    np.asarray(mask, dtype=bool) if mask is not None else np.isnan(fit_x)
+                )
+                valid = d.get("knn_valid_mask_")
+                obj.imputer._valid_mask = (
+                    np.asarray(valid, dtype=bool)
+                    if valid is not None
+                    else np.ones(fit_x.shape[1], dtype=bool)
+                )
+                obj.imputer.n_features_in_ = int(
+                    d.get("knn_n_features_in_", len(obj.fitted_columns_))
+                )
+            mark_fitted(obj, ready)
+        else:
+            mark_fitted(obj, "imputers_" in d or bool(obj.fitted_columns_))
         return obj
 
 

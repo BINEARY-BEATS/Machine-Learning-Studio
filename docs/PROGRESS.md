@@ -226,3 +226,43 @@ Branch workflow from `docs/CURSOR_PLAN.md`. One task per branch. Do not mark don
 - `ml_studio/gui/main_window.py`
 - `ml_studio/tests/core/test_ingestion_b6.py` (new)
 - `docs/PROGRESS.md`
+
+---
+
+## B7 — Pipeline / project serialization safety
+
+**Branch:** `fix/b7-serialization`  
+**Status:** Done (2026-10-06)  
+**Depends on:** —  
+**Next:** B8 (verified bugs bundle)
+
+### Problem (context)
+
+- Fitted numpy state in `Pipeline.to_dict` broke JSON project saves.
+- `from_dict` marked transforms fitted without restoring sklearn state.
+- Loose try/except transform tests hid failures.
+
+### Done
+
+1. `core/serialization.py` — `to_jsonable`.
+2. `Pipeline.to_dict(include_state=...)`; session_io writes `include_state=False`.
+3. `from_dict` without state → unfitted steps; Power/Quantile/Polynomial/Binning/Impute knn restore real state or stay unfitted; IsolationForestFilter always unfitted from JSON.
+4. Parametrized round-trip tests replace semantic blocker.
+
+### Acceptance checked
+
+- Round-trip for registered transforms; project pipeline JSON unfitted + jsonable.
+
+### Files touched
+
+- `ml_studio/core/serialization.py` (new)
+- `ml_studio/core/pipeline.py`
+- `ml_studio/core/persistence/session_io.py`
+- `ml_studio/transforms/base.py`
+- `ml_studio/transforms/scaling.py`
+- `ml_studio/transforms/feature_eng.py`
+- `ml_studio/transforms/outliers.py`
+- `ml_studio/transforms/missing.py`
+- `ml_studio/tests/transforms/test_transform_roundtrip.py` (new)
+- `ml_studio/tests/transforms/test_semantic_blocker3.py`
+- `docs/PROGRESS.md`

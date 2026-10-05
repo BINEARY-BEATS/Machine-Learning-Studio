@@ -228,22 +228,32 @@ class Quantile(BaseTransform):
     def to_dict(self) -> dict:
         d = self.params.copy()
         d["fitted_columns_"] = self.fitted_columns_
-        # Serialization of sklearn state requires extracting quantiles_ and references_
         if hasattr(self, 'scaler'):
             d["quantiles_"] = [q.tolist() for q in self.scaler.quantiles_.T]
             d["references_"] = self.scaler.references_.tolist()
+            d["n_quantiles_"] = int(self.scaler.n_quantiles_)
+            d["n_features_in_"] = int(self.scaler.n_features_in_)
         return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "BaseTransform":
+        from ml_studio.transforms.base import mark_fitted
+
         obj = cls(columns=d.get("columns", None), n_quantiles=d.get("n_quantiles", 1000))
         obj.fitted_columns_ = d.get("fitted_columns_", [])
-        if "quantiles_" in d and "references_" in d:
-            obj.scaler = QuantileTransformer(n_quantiles=obj.n_quantiles, random_state=42)
-            # Reconstruct
+        ready = (
+            "quantiles_" in d
+            and "references_" in d
+            and bool(obj.fitted_columns_)
+        )
+        if ready:
+            n_q = int(d.get("n_quantiles_", obj.n_quantiles))
+            obj.scaler = QuantileTransformer(n_quantiles=n_q, random_state=42)
             obj.scaler.quantiles_ = np.array(d["quantiles_"]).T
             obj.scaler.references_ = np.array(d["references_"])
-        obj._is_fitted = True
+            obj.scaler.n_quantiles_ = n_q
+            obj.scaler.n_features_in_ = int(d.get("n_features_in_", len(obj.fitted_columns_)))
+        mark_fitted(obj, ready)
         return obj
 
 
@@ -293,21 +303,41 @@ class Power(BaseTransform):
         d["fitted_columns_"] = self.fitted_columns_
         if hasattr(self, 'scaler'):
             d["lambdas_"] = self.scaler.lambdas_.tolist()
+            inner = getattr(self.scaler, "_scaler", None)
+            if inner is not None and hasattr(inner, "mean_"):
+                d["scaler_mean_"] = inner.mean_.tolist()
+                d["scaler_scale_"] = inner.scale_.tolist()
+                d["scaler_var_"] = inner.var_.tolist() if hasattr(inner, "var_") else None
+                d["scaler_n_features_in_"] = int(inner.n_features_in_)
         return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "BaseTransform":
+        from ml_studio.transforms.base import mark_fitted
+
         obj = cls(columns=d.get("columns", None), method=d.get("method", "yeo-johnson"))
         obj.fitted_columns_ = d.get("fitted_columns_", [])
-        if "lambdas_" in d:
+        ready = (
+            "lambdas_" in d
+            and "scaler_mean_" in d
+            and "scaler_scale_" in d
+            and bool(obj.fitted_columns_)
+        )
+        if ready:
             obj.scaler = PowerTransformer(method=obj.method)
             obj.scaler.lambdas_ = np.array(d["lambdas_"])
-            # PowerTransformer relies on these internals during transform
-            obj.scaler._scaler = StandardScaler()
-            # To properly restore a PowerTransformer without training data is tricky 
-            # because _scaler (StandardScaler) holds mean/var computed *after* transformation.
-            # In a real impl we'd serialize that too.
-        obj._is_fitted = True
+            obj.scaler.n_features_in_ = len(obj.fitted_columns_)
+            inner = StandardScaler()
+            inner.mean_ = np.array(d["scaler_mean_"], dtype=float)
+            inner.scale_ = np.array(d["scaler_scale_"], dtype=float)
+            if d.get("scaler_var_") is not None:
+                inner.var_ = np.array(d["scaler_var_"], dtype=float)
+            else:
+                inner.var_ = inner.scale_ ** 2
+            inner.n_features_in_ = int(d.get("scaler_n_features_in_", len(obj.fitted_columns_)))
+            inner.n_samples_seen_ = 1
+            obj.scaler._scaler = inner
+        mark_fitted(obj, ready)
         return obj
 
 

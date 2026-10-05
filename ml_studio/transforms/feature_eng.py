@@ -71,6 +71,8 @@ class Polynomial(BaseTransform):
 
     @classmethod
     def from_dict(cls, d: dict) -> "BaseTransform":
+        from ml_studio.transforms.base import mark_fitted
+
         obj = cls(
             columns=d.get("columns", None),
             degree=d.get("degree", 2),
@@ -79,11 +81,16 @@ class Polynomial(BaseTransform):
         )
         obj.fitted_columns_ = d.get("fitted_columns_", [])
         obj.feature_names_out_ = d.get("feature_names_out_", [])
-        if obj.fitted_columns_:
-            obj.poly = PolynomialFeatures(degree=obj.degree, interaction_only=obj.interaction_only, include_bias=obj.include_bias)
-            # Reconstruct is hard without data, so we don't fully support transforming from dict 
-            # for sklearn estimators that require state.
-        obj._is_fitted = True
+        ready = bool(obj.fitted_columns_) and bool(obj.feature_names_out_)
+        if ready:
+            obj.poly = PolynomialFeatures(
+                degree=obj.degree,
+                interaction_only=obj.interaction_only,
+                include_bias=obj.include_bias,
+            )
+            zeros = np.zeros((1, len(obj.fitted_columns_)))
+            obj.poly.fit(zeros)
+        mark_fitted(obj, ready)
         return obj
 
 
@@ -361,13 +368,19 @@ class Binning(BaseTransform):
 
     @classmethod
     def from_dict(cls, d: dict) -> "BaseTransform":
+        from ml_studio.transforms.base import mark_fitted
+
         obj = cls(columns=d.get("columns", None), strategy=d.get("strategy", "equal_width"), n_bins=d.get("n_bins", 10))
         obj.fitted_columns_ = d.get("fitted_columns_", [])
-        if "bin_edges_" in d:
+        ready = "bin_edges_" in d and bool(obj.fitted_columns_)
+        if ready:
             strat_map = {"equal_width": "uniform", "equal_freq": "quantile", "kmeans": "kmeans"}
             obj.est = KBinsDiscretizer(n_bins=obj.n_bins, encode='ordinal', strategy=strat_map[obj.strategy])
-            obj.est.bin_edges_ = np.array([np.array(e) for e in d["bin_edges_"]], dtype=object)
-        obj._is_fitted = True
+            edges = [np.asarray(e, dtype=float) for e in d["bin_edges_"]]
+            obj.est.bin_edges_ = np.array(edges, dtype=object)
+            obj.est.n_features_in_ = len(obj.fitted_columns_)
+            obj.est.n_bins_ = np.array([max(len(e) - 1, 1) for e in edges])
+        mark_fitted(obj, ready)
         return obj
 
 

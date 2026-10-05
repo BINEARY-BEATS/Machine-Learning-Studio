@@ -229,15 +229,15 @@ class IsolationForestFilter(BaseTransform):
     def to_dict(self) -> dict:
         d = self.params.copy()
         d["fitted_columns_"] = self.fitted_columns_
-        # To serialize IF completely requires storing all trees. We omit for now, 
-        # but in a production system we'd use joblib or ONNX for the model object.
+        # IsolationForest trees are not JSON-serializable; fitted state lives in joblib artifacts.
         return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "BaseTransform":
+        from ml_studio.transforms.base import mark_fitted
+
         obj = cls(columns=d.get("columns", None), contamination=d.get("contamination", 0.1))
         obj.fitted_columns_ = d.get("fitted_columns_", [])
-        # We cannot easily re-instantiate an already fitted IF from a simple dict. 
-        # This is a known limitation when saving sklearn ensemble models via json.
-        obj._is_fitted = True
+        # Model itself is never restored from JSON — leave unfitted.
+        mark_fitted(obj, False)
         return obj
