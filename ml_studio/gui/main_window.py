@@ -356,6 +356,7 @@ class MainWindow(QMainWindow):
             self._on_worker_progress,
             self._on_worker_error,
             self._on_worker_finished,
+            options=dialog.chosen_options(),
         )
 
     def _on_dataset_loaded(self, dataset) -> None:

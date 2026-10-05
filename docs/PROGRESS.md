@@ -191,3 +191,38 @@ Branch workflow from `docs/CURSOR_PLAN.md`. One task per branch. Do not mark don
 - `ml_studio/tests/benchmarks/benchmark_io.py`
 - `pyproject.toml`
 - `docs/PROGRESS.md`
+
+---
+
+## B6 — Ingestion: TSV / semicolon / sheets / preview
+
+**Branch:** `fix/b6-ingestion`  
+**Status:** Done (2026-10-06)  
+**Depends on:** —  
+**Next:** B7 (pipeline serialization)
+
+### Problem (context)
+
+- `.tsv` used CSV loader with `sep=","` → one column; semicolon CSVs same.
+- Excel only first sheet; preview crashed on jsonl/tsv/sqlite; remote URL suffix ignored query strings and double-opened.
+
+### Done
+
+1. `LocalFileSource.preview` for every supported format; delimiter sniff (`.tsv` forces tab); `list_sheets` / `list_tables`.
+2. `load()` accepts `sep`, `encoding`, `sheet`, `table`.
+3. `ImportPreviewDialog` uses core preview; sheet/table/delimiter controls; `chosen_options()` → worker.
+4. `RemoteFileSource` single open; extension from `urlparse(...).path`.
+
+### Acceptance checked
+
+- TSV + semicolon CSV column counts; json/jsonl preview; multi-sheet xlsx; multi-table sqlite; previews for common extensions; remote `?token=` extension.
+
+### Files touched
+
+- `ml_studio/core/ingestion.py`
+- `ml_studio/gui/dialogs/import_preview.py`
+- `ml_studio/gui/workers/dataset_worker.py`
+- `ml_studio/gui/app_controller.py`
+- `ml_studio/gui/main_window.py`
+- `ml_studio/tests/core/test_ingestion_b6.py` (new)
+- `docs/PROGRESS.md`

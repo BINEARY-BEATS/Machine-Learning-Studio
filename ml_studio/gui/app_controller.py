@@ -149,12 +149,14 @@ class AppController:
             parent,
             "Import Dataset",
             str(Path.home()),
-            "Data Files (*.csv *.xlsx *.xls *.json *.jsonl *.parquet *.feather *.arrow *.orc *.db *.sqlite)",
+            "Data Files (*.csv *.tsv *.xlsx *.xls *.json *.jsonl *.parquet *.feather *.arrow *.orc *.db *.sqlite)",
         )
         return Path(path) if path else None
 
-    def load_dataset(self, path: Path, on_loaded, progress_cb, error_cb, finished_cb) -> None:
-        worker = DatasetLoadWorker(path)
+    def load_dataset(
+        self, path: Path, on_loaded, progress_cb, error_cb, finished_cb, options=None
+    ) -> None:
+        worker = DatasetLoadWorker(path, options=options)
         self.start_worker(worker, on_loaded, progress_cb, error_cb, finished_cb)
 
     def on_dataset_loaded(self, dataset, pages) -> None:
