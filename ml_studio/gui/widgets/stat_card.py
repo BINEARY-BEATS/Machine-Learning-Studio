@@ -45,17 +45,24 @@ class StatCard(Card):
     def set_title(self, title: str) -> None:
         self._title.setText(title)
 
+    def set_metric_key(self, key: str) -> None:
+        self._metric_key = key
+
     def set_theme_mode(self, mode: ThemeMode) -> None:
         self._mode = mode
 
     def set_value(self, value: str, raw: Any = None, task: str = "") -> None:
         self._value.setText(value)
         self._hint.hide()
-        if self._metric_key and raw is not None:
-            color = metric_color(self._mode, self._metric_key, raw, task)
-            self._value.setStyleSheet(f"color: {color};")
-            if raw is None or (isinstance(raw, float) and str(raw) == "nan"):
-                self._hint.setText(metric_na_reason(self._metric_key, task))
-                self._hint.show()
-        else:
+        if not self._metric_key:
             self._value.setStyleSheet("")
+            return
+        is_na = raw is None or (isinstance(raw, float) and str(raw) == "nan")
+        if is_na:
+            color = metric_color(self._mode, self._metric_key, float("nan"), task)
+            self._value.setStyleSheet(f"color: {color};")
+            self._hint.setText(metric_na_reason(self._metric_key, task))
+            self._hint.show()
+            return
+        color = metric_color(self._mode, self._metric_key, raw, task)
+        self._value.setStyleSheet(f"color: {color};")
