@@ -266,3 +266,25 @@ Branch workflow from `docs/CURSOR_PLAN.md`. One task per branch. Do not mark don
 - `ml_studio/tests/transforms/test_transform_roundtrip.py` (new)
 - `ml_studio/tests/transforms/test_semantic_blocker3.py`
 - `docs/PROGRESS.md`
+
+---
+
+## B8 — Small verified bugs (bundle)
+
+**Branch:** `fix/b8-bugs`  
+**Status:** Done (2026-10-06)  
+**Depends on:** —  
+**Next:** F1 (evaluation upgrade) or independent B leftovers
+
+### Done (one commit each)
+
+1. Profile zeros + `ColumnProfile.top_values` / Data page Top values column.
+2. StatCard N/A hint reachable.
+3. Hard-coded colors → `#DangerText` / `#SuccessText` / `#WarningText` / `#TaskProgressPanel` QSS.
+4. Recipe description reads top-level `description`.
+5. Recipe tests use `tmp_path`; removed `recipes/test_recipe.yaml`.
+6. Evaluate primary `metric_key` per task + `run_count()` (main_window uses it).
+
+### Acceptance checked
+
+- New regression tests for each fix; theme QSS assertions extended.
