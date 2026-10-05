@@ -75,7 +75,7 @@ class StepConfigDialog(QDialog):
         
         self._error_label = QLabel("")
         self._error_label.setObjectName("DangerText")
-        self._error_label.setStyleSheet("color: red;")
+        self._error_label.setObjectName("DangerText")
         self._error_label.hide()
         layout.addWidget(self._error_label)
         

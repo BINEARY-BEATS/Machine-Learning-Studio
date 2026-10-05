@@ -38,7 +38,17 @@ def test_palette_has_semantic_colors():
 
 def test_build_stylesheet_contains_object_names():
     qss = build_stylesheet(ThemeMode.LIGHT)
-    for name in ("#Card", "#SearchBar", "#TagChip", "#LoadingOverlay", "#ToastLabel"):
+    for name in (
+        "#Card",
+        "#SearchBar",
+        "#TagChip",
+        "#LoadingOverlay",
+        "#ToastLabel",
+        "#DangerText",
+        "#SuccessText",
+        "#WarningText",
+        "#TaskProgressPanel",
+    ):
         assert name in qss
 
 

@@ -57,19 +57,19 @@ class PreviewModal(QDialog):
                     add_lbl = QLabel(
                         f"  + Added: {', '.join(str(c) for c in step['added_columns'])}"
                     )
-                    add_lbl.setStyleSheet("color: green;")
+                    add_lbl.setObjectName("SuccessText")
                     content_layout.addWidget(add_lbl)
 
                 if step["removed_columns"]:
                     rem_lbl = QLabel(
                         f"  - Removed: {', '.join(str(c) for c in step['removed_columns'])}"
                     )
-                    rem_lbl.setStyleSheet("color: red;")
+                    rem_lbl.setObjectName("DangerText")
                     content_layout.addWidget(rem_lbl)
 
                 for w in step["warnings"]:
                     w_lbl = QLabel(f"  Warning: {w}")
-                    w_lbl.setStyleSheet("color: orange;")
+                    w_lbl.setObjectName("WarningText")
                     content_layout.addWidget(w_lbl)
 
                 content_layout.addSpacing(10)

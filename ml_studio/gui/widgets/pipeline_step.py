@@ -39,7 +39,7 @@ class PipelineStepWidget(QWidget):
         text_layout = QVBoxLayout()
         name_label = QLabel(self.step.__class__.__name__)
         name_label.setObjectName("BaseText")
-        name_label.setStyleSheet("font-weight: bold;")
+        name_label.setObjectName("BoldLabel")
         text_layout.addWidget(name_label)
 
         params_str = ", ".join(f"{k}={v}" for k, v in self.step.params.items())

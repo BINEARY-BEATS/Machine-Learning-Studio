@@ -325,6 +325,18 @@ def _overlay_qss(p, s, r) -> str:
         border-radius: {r['md']}px;
         padding: {s[3]}px;
     }}
+    #DangerText {{ color: {p.danger}; }}
+    #SuccessText {{ color: {p.success}; }}
+    #WarningText {{ color: {p.warning}; }}
+    #SectionHeader {{
+        font-weight: 700;
+        font-size: 14px;
+        color: {p.text};
+    }}
+    #BoldLabel {{ font-weight: 700; color: {p.text}; }}
+    #TaskProgressPanel {{
+        background-color: {p.scrim};
+    }}
     QPushButton#PillTab {{
         background-color: {p.surface_raised};
         border: 1px solid {p.border_subtle};

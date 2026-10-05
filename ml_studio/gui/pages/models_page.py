@@ -171,8 +171,13 @@ class ModelsPage(BasePage):
             status = "archived" if "archived" in (model.tags or []) else "active"
             status_item = QTableWidgetItem(status)
             if status == "active":
+                from ml_studio.app.theme import ThemeMode, color_token
+
+                mode = getattr(self, "_mode", ThemeMode.LIGHT)
                 status_item.setForeground(
-                    __import__("PyQt6.QtGui", fromlist=["QColor"]).QColor("#3FB950")
+                    __import__("PyQt6.QtGui", fromlist=["QColor"]).QColor(
+                        color_token(mode, "success")
+                    )
                 )
             self._table.setItem(i, 7, status_item)
 
