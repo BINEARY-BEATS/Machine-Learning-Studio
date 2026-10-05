@@ -212,7 +212,8 @@ class AppController:
         if prepare is not None and prepare.pipeline.steps:
             active = [s for s in prepare.pipeline.steps if getattr(s, "enabled", True)]
             if active:
-                preprocessing = Pipeline(steps=list(active))
+                # Clone so training never mutates the Prepare-page pipeline.
+                preprocessing = Pipeline(steps=list(active)).clone_unfitted()
         # Raw dataframe — preparation runs inside TrainingWorker
         return TrainingWorker(
             self.current_dataset.dataframe,

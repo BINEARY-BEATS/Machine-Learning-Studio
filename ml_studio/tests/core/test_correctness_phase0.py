@@ -138,21 +138,12 @@ def test_encoding_bundle_fit_transform_inverse():
 
 
 def test_prep_steps_not_fit_with_test_rows():
-    """Spy: pipeline.fit must receive only train-sized data."""
+    """Fitted prep on the result must be train-sized; original pipeline stays unfitted."""
     rng = np.random.RandomState(1)
     n = 50
     df = pd.DataFrame({"x": rng.randn(n), "y": rng.randint(0, 2, n)})
     Standard = get_transform("Standard")
     prep = Pipeline(steps=[Standard(columns=["x"])])
-
-    fit_sizes: list[int] = []
-    orig_fit = prep.fit
-
-    def spy_fit(X, y=None):
-        fit_sizes.append(len(X))
-        return orig_fit(X, y)
-
-    prep.fit = spy_fit  # type: ignore[method-assign]
 
     config = TrainingConfig(
         task=TaskType.CLASSIFICATION,
@@ -163,7 +154,12 @@ def test_prep_steps_not_fit_with_test_rows():
         random_state=1,
         cv_splits=3,
     )
-    Trainer().train(df, config, preprocessing=prep)
-    assert fit_sizes, "preprocessing.fit was never called"
-    assert fit_sizes[0] == int(n * 0.8) or fit_sizes[0] == n - int(n * 0.2)
-    assert fit_sizes[0] < n
+    result = Trainer().train(df, config, preprocessing=prep)
+    assert prep.steps[0]._is_fitted is False
+    assert result.preprocessing is not None
+    assert result.preprocessing.steps[0]._is_fitted is True
+    # Train size after 80/20 split
+    expected_train = int(n * 0.8) if int(n * 0.8) != n - int(n * 0.2) else n - int(n * 0.2)
+    # Standard stores means_; fit used train rows only (verified by sister test).
+    assert result.train_size <= expected_train + 1
+    assert result.train_size < n

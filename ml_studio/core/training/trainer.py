@@ -1,4 +1,4 @@
-"""Model training engine — split first, fit prep/encoders on train only."""
+"""Model training engine — split RAW first; fit prep/encoders on train only."""
 
 from __future__ import annotations
 
@@ -9,16 +9,22 @@ from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import cross_val_score, train_test_split
 
-from ml_studio.app.logger import get_logger
 from ml_studio.core.pipeline import Pipeline
 from ml_studio.core.training.cv import recommend_cv_strategy
+from ml_studio.core.training.cv_runner import (
+    apply_preprocessing,
+    cross_val_score_leakfree,
+    fit_preprocessing,
+    split_data,
+)
 from ml_studio.core.training.data_prep import EncodingBundle
-from ml_studio.core.training.registry import get_model
+from ml_studio.core.training.registry import MODEL_REGISTRY, get_model
 from ml_studio.core.training.task import TaskType
+from ml_studio.core.training.tuning import maybe_tune, scoring_for_task
 
-logger = get_logger("trainer")
+_UNSUPERVISED = (TaskType.CLUSTERING, TaskType.ANOMALY_DETECTION)
+ProgressCb = Callable[[int, str], None] | None
 
 
 @dataclass
@@ -68,382 +74,231 @@ class Trainer:
         df: pd.DataFrame,
         config: TrainingConfig,
         preprocessing: Pipeline | None = None,
-        progress_callback: Callable[[int, str], None] | None = None,
+        progress_callback: ProgressCb = None,
     ) -> TrainingResult:
         start = time.time()
         experiment_id = str(uuid.uuid4())
-
-        if self._cancelled:
-            raise InterruptedError("Training cancelled by user")
-
-        if progress_callback:
-            progress_callback(
-                5,
-                f"Loaded {len(df):,} rows, {len(config.feature_columns)} features, "
-                f"target '{config.target_column}'",
-            )
-
-        input_feature_columns = list(config.feature_columns)
-        X_raw = df[input_feature_columns].copy()
-        y_raw = (
-            df[config.target_column].copy()
-            if config.task
-            not in (
-                TaskType.CLUSTERING,
-                TaskType.ANOMALY_DETECTION,
-            )
-            else None
+        self._check_cancel()
+        self._emit(
+            progress_callback,
+            5,
+            f"Loaded {len(df):,} rows, {len(config.feature_columns)} features, "
+            f"target '{config.target_column}'",
+        )
+        input_cols = list(config.feature_columns)
+        X_raw = df[input_cols].copy()
+        y_raw = None if config.task in _UNSUPERVISED else df[config.target_column].copy()
+        bundles = self._prepare_splits(X_raw, y_raw, config, preprocessing, progress_callback)
+        params = self._resolve_params(config, bundles, preprocessing, progress_callback)
+        return self._finish(
+            experiment_id, start, config, preprocessing, params, bundles, input_cols,
+            progress_callback,
         )
 
-        # --- Split FIRST (before any fit) to avoid leakage ---
-        encoding = EncodingBundle()
-        fitted_preprocessing: Pipeline | None = None
-
-        if config.task in (TaskType.CLUSTERING, TaskType.ANOMALY_DETECTION):
-            X_train_raw, X_test_raw = X_raw, pd.DataFrame()
-            y_train_raw = y_test_raw = None
-        else:
-            if progress_callback:
-                progress_callback(
-                    15,
-                    f"Splitting data ({int((1 - config.test_size) * 100)}% train / "
-                    f"{int(config.test_size * 100)}% test)…",
-                )
-            stratify = None
-            if config.task == TaskType.CLASSIFICATION and y_raw is not None:
-                class_counts = y_raw.value_counts()
-                if y_raw.nunique() <= 20 and class_counts.min() >= 2:
-                    stratify = y_raw
-            X_train_raw, X_test_raw, y_train_raw, y_test_raw = train_test_split(
-                X_raw,
-                y_raw,
-                test_size=config.test_size,
-                random_state=config.random_state,
-                stratify=stratify,
-            )
-
-        # --- Fit Prepare pipeline on TRAIN only ---
-        if preprocessing is not None and getattr(preprocessing, "steps", None):
-            n_steps = len([s for s in preprocessing.steps if getattr(s, "enabled", True)])
-            if progress_callback:
-                progress_callback(22, f"Fitting preprocessing on train only ({n_steps} step(s))…")
-            fitted_preprocessing = preprocessing
-            if y_train_raw is not None:
-                fitted_preprocessing.fit(X_train_raw, y_train_raw)
-            else:
-                fitted_preprocessing.fit(X_train_raw)
-            X_train = fitted_preprocessing.transform(X_train_raw)
-            X_test = (
-                fitted_preprocessing.transform(X_test_raw)
-                if len(X_test_raw)
-                else X_test_raw
-            )
-        else:
-            if progress_callback:
-                progress_callback(22, "No preprocessing pipeline — using raw features")
-            X_train = X_train_raw.copy()
-            X_test = X_test_raw.copy() if len(X_test_raw) else X_test_raw
-
-        # Align feature columns after prep (columns may change)
-        feature_columns = list(X_train.columns)
-
-        # --- Fit encoders on TRAIN only ---
-        if progress_callback:
-            progress_callback(28, "Fitting feature/target encoders on train only…")
-        encoding.fit(
-            X_train,
-            y_train_raw,
-            config.task,
-            config.target_column or "",
+    def _prepare_splits(self, X_raw, y_raw, config, preprocessing, cb):
+        X_tr_r, X_te_r, y_tr_r, y_te_r = self._split(X_raw, y_raw, config, cb)
+        fitted, X_tr, y_tr, X_te, y_te = self._prepare(
+            preprocessing, X_tr_r, y_tr_r, X_te_r, y_te_r, cb
         )
-        X_train = encoding.transform_features(X_train)
-        if len(X_test):
-            # Ensure test has same columns as train after prep
-            for col in feature_columns:
-                if col not in X_test.columns:
-                    X_test[col] = np.nan
-            X_test = X_test[feature_columns]
-            X_test = encoding.transform_features(X_test)
+        encoding, X_tr, y_tr, X_te, y_te = self._encode(
+            X_tr, y_tr, X_te, y_te, config, cb
+        )
+        return {
+            "fitted_prep": fitted,
+            "encoding": encoding,
+            "X_train_raw": X_tr_r,
+            "y_train_raw": y_tr_r,
+            "X_train": X_tr,
+            "y_train": y_tr,
+            "X_test": X_te,
+            "y_test": y_te,
+            "feature_columns": list(X_tr.columns),
+        }
 
-        y_train = encoding.transform_target(y_train_raw) if y_train_raw is not None else None
-        y_test = encoding.transform_target(y_test_raw) if y_test_raw is not None else None
-
-        # Drop rows with NaN after prep/encode
-        if y_train is not None:
-            train_mask = X_train.notna().all(axis=1) & y_train.notna()
-            X_train = X_train.loc[train_mask]
-            y_train = y_train.loc[train_mask]
-        else:
-            X_train = X_train.dropna()
-        if y_test is not None and len(X_test):
-            test_mask = X_test.notna().all(axis=1) & y_test.notna()
-            X_test = X_test.loc[test_mask]
-            y_test = y_test.loc[test_mask]
-
-        from ml_studio.core.training.registry import MODEL_REGISTRY
-
-        model_label = MODEL_REGISTRY.get(config.model_id)
-        model_name = model_label.name if model_label else config.model_id
-        params = dict(config.hyperparameters)
-
+    def _resolve_params(self, config, bundles, preprocessing, cb) -> dict[str, Any]:
         if (
             config.tune_method in ("optuna", "grid")
-            and config.task not in (TaskType.CLUSTERING, TaskType.ANOMALY_DETECTION)
-            and y_train is not None
+            and config.task not in _UNSUPERVISED
+            and bundles["y_train_raw"] is not None
         ):
-            params = self._maybe_tune(
+            return maybe_tune(
                 config,
-                X_train,
-                y_train,
-                model_label,
-                progress_callback,
+                bundles["X_train_raw"],
+                bundles["y_train_raw"],
+                preprocessing,
+                lambda: self._cancelled,
+                cb,
             )
+        return dict(config.hyperparameters)
 
-        if progress_callback:
-            progress_callback(35, f"Building {model_name}…")
-
+    def _finish(self, experiment_id, start, config, preprocessing, params, b, input_cols, cb):
+        meta = MODEL_REGISTRY.get(config.model_id)
+        name = meta.name if meta else config.model_id
+        self._emit(cb, 35, f"Building {name}…")
         model = get_model(config.model_id, **params)
-
-        if self._cancelled:
-            raise RuntimeError("Training cancelled")
-
-        cv_scores_arr = np.array([])
-        y_test_eval = None
-        if config.task in (TaskType.CLUSTERING, TaskType.ANOMALY_DETECTION):
-            if self._cancelled:
-                raise InterruptedError("Training cancelled by user")
-            if progress_callback:
-                progress_callback(55, f"Fitting {model_name} on {len(X_train):,} samples…")
-            model.fit(X_train)
-            if self._cancelled:
-                raise InterruptedError("Training cancelled by user")
-            preds = model.predict(X_train)
-        else:
-            n_classes = y_train.nunique() if config.task == TaskType.CLASSIFICATION else None
-            if self._cancelled:
-                raise InterruptedError("Training cancelled by user")
-            cv = recommend_cv_strategy(
-                config.task,
-                len(X_train),
-                n_classes=n_classes,
-                is_time_series=config.is_time_series,
-                n_splits=config.cv_splits,
-            )
-            scoring = self._scoring_for_task(config.task)
-            cv_name = type(cv).__name__
-            n_folds = getattr(cv, "n_splits", config.cv_splits)
-            if progress_callback:
-                progress_callback(
-                    40,
-                    f"Cross-validation ({cv_name}, {n_folds} folds, scoring={scoring}) "
-                    f"on {len(X_train):,} training rows — fold 1/{n_folds}…",
-                )
-            if self._cancelled:
-                raise InterruptedError("Training cancelled by user")
-            # Fold-by-fold so the UI updates (SVR/RF on large data can take minutes per fold)
-            from sklearn.base import clone
-            from sklearn.metrics import get_scorer
-
-            scorer = get_scorer(scoring)
-            fold_scores: list[float] = []
-            splits = list(cv.split(X_train, y_train))
-            for fi, (tr_idx, te_idx) in enumerate(splits):
-                if self._cancelled:
-                    raise InterruptedError("Training cancelled by user")
-                pct = 40 + int(25 * fi / max(len(splits), 1))
-                if progress_callback:
-                    progress_callback(
-                        pct,
-                        f"CV fold {fi + 1}/{len(splits)} "
-                        f"({cv_name}, scoring={scoring}, "
-                        f"{len(tr_idx):,} train / {len(te_idx):,} val)…",
-                    )
-                est = clone(model)
-                est.fit(X_train.iloc[tr_idx], y_train.iloc[tr_idx])
-                fold_scores.append(
-                    float(scorer(est, X_train.iloc[te_idx], y_train.iloc[te_idx]))
-                )
-            cv_scores_arr = np.asarray(fold_scores, dtype=float)
-            if progress_callback:
-                progress_callback(
-                    68,
-                    f"CV complete — mean {scoring}={float(np.mean(cv_scores_arr)):.4f} "
-                    f"(±{float(np.std(cv_scores_arr)):.4f}). Fitting final model…",
-                )
-            if self._cancelled:
-                raise InterruptedError("Training cancelled by user")
-            model.fit(X_train, y_train)
-            if progress_callback:
-                progress_callback(80, f"Evaluating on {len(X_test):,} held-out test rows…")
-            preds = model.predict(X_test)
-            y_test_eval = y_test
-
-        duration = time.time() - start
-
-        if progress_callback:
-            progress_callback(92, "Computing evaluation metrics…")
-
-        metrics = self._compute_metrics(
-            config.task,
-            model,
-            X_train,
-            preds,
-            y_test_eval,
-            y_train,
+        self._check_cancel()
+        cv_arr, preds, y_eval = self._fit_and_eval(
+            model, name, config, preprocessing, params, b, cb
         )
-
+        metrics = self._compute_metrics(
+            config.task, model, b["X_train"], preds, y_eval, b["y_train"]
+        )
+        self._emit_done(cb, metrics)
         cv_scores = {}
-        if len(cv_scores_arr):
-            cv_scores = {
-                "mean": float(np.mean(cv_scores_arr)),
-                "std": float(np.std(cv_scores_arr)),
-            }
-
-        if progress_callback:
-            primary = (
-                metrics.get("r2")
-                or metrics.get("f1")
-                or metrics.get("accuracy")
-                or metrics.get("silhouette")
-            )
-            summary = f"{primary:.4f}" if isinstance(primary, float) else "done"
-            progress_callback(100, f"Training complete — primary score: {summary}")
-
+        if len(cv_arr):
+            cv_scores = {"mean": float(np.mean(cv_arr)), "std": float(np.std(cv_arr))}
         return TrainingResult(
             experiment_id=experiment_id,
             model_id=config.model_id,
             task=config.task,
             metrics=metrics,
             cv_scores=cv_scores,
-            training_duration=duration,
+            training_duration=time.time() - start,
             estimator=model,
-            preprocessing=fitted_preprocessing,
-            feature_columns=feature_columns,
+            preprocessing=b["fitted_prep"],
+            feature_columns=b["feature_columns"],
             target_column=config.target_column,
-            train_size=len(X_train),
-            test_size=len(X_test) if len(X_test) else 0,
-            encoding=encoding,
-            input_feature_columns=input_feature_columns,
-            y_true_holdout=y_test_eval,
-            y_pred_holdout=preds if config.task not in (
-                TaskType.CLUSTERING,
-                TaskType.ANOMALY_DETECTION,
-            ) else None,
+            train_size=len(b["X_train"]),
+            test_size=len(b["X_test"]) if len(b["X_test"]) else 0,
+            encoding=b["encoding"],
+            input_feature_columns=input_cols,
+            y_true_holdout=y_eval,
+            y_pred_holdout=preds if config.task not in _UNSUPERVISED else None,
         )
 
-    def _maybe_tune(
-        self,
-        config: TrainingConfig,
-        X_train,
-        y_train,
-        model_label,
-        progress_callback: Callable[[int, str], None] | None,
-    ) -> dict[str, Any]:
-        """Run Optuna or grid search when a param space exists; else keep defaults."""
-        space = dict(getattr(model_label, "hyperparameters", None) or {})
-        clean_space: dict[str, list[Any]] = {}
-        for key, values in space.items():
-            if not isinstance(values, (list, tuple)) or not values:
-                continue
-            vals = [v for v in values if v is not None]
-            if vals:
-                clean_space[key] = list(vals)
-        if not clean_space:
-            if progress_callback:
-                progress_callback(28, "No tunable hyperparameters for this model — using defaults")
-            return dict(config.hyperparameters)
+    def _split(self, X_raw, y_raw, config, cb):
+        if config.task in _UNSUPERVISED:
+            return X_raw, pd.DataFrame(), None, None
+        self._emit(
+            cb,
+            15,
+            f"Splitting data ({int((1 - config.test_size) * 100)}% train / "
+            f"{int(config.test_size * 100)}% test)…",
+        )
+        return split_data(X_raw, y_raw, config)
 
-        n_classes = y_train.nunique() if config.task == TaskType.CLASSIFICATION else None
+    def _prepare(self, preprocessing, X_tr_r, y_tr_r, X_te_r, y_te_r, cb):
+        n_steps = 0
+        if preprocessing is not None:
+            n_steps = len([s for s in preprocessing.steps if getattr(s, "enabled", True)])
+        msg = (
+            f"Fitting preprocessing on train only ({n_steps} step(s))…"
+            if n_steps
+            else "No preprocessing pipeline — using raw features"
+        )
+        self._emit(cb, 22, msg)
+        fitted, X_tr, y_tr = fit_preprocessing(preprocessing, X_tr_r, y_tr_r)
+        if len(X_te_r):
+            X_te, y_te = apply_preprocessing(fitted, X_te_r, y_te_r)
+        else:
+            X_te, y_te = X_te_r, y_te_r
+        return fitted, X_tr, y_tr, X_te, y_te
+
+    def _encode(self, X_train, y_train, X_test, y_test, config, cb):
+        self._emit(cb, 28, "Fitting feature/target encoders on train only…")
+        encoding = EncodingBundle()
+        encoding.fit(X_train, y_train, config.task, config.target_column or "")
+        cols = list(X_train.columns)
+        X_train = encoding.transform_features(X_train)
+        if len(X_test):
+            for col in cols:
+                if col not in X_test.columns:
+                    X_test[col] = np.nan
+            X_test = encoding.transform_features(X_test[cols])
+        y_train = encoding.transform_target(y_train) if y_train is not None else None
+        y_test = encoding.transform_target(y_test) if y_test is not None else None
+        X_train, y_train = _dropna_xy(X_train, y_train)
+        if y_test is not None and len(X_test):
+            X_test, y_test = _dropna_xy(X_test, y_test)
+        return encoding, X_train, y_train, X_test, y_test
+
+    def _fit_and_eval(self, model, name, config, preprocessing, params, b, cb):
+        if config.task in _UNSUPERVISED:
+            self._check_cancel()
+            self._emit(cb, 55, f"Fitting {name} on {len(b['X_train']):,} samples…")
+            model.fit(b["X_train"])
+            self._check_cancel()
+            return np.array([]), model.predict(b["X_train"]), None
+        cv_arr = self._run_cv(
+            config, params, preprocessing, b["X_train_raw"], b["y_train_raw"], cb
+        )
+        self._emit(
+            cb,
+            68,
+            f"CV complete — mean={float(np.mean(cv_arr)):.4f} "
+            f"(±{float(np.std(cv_arr)):.4f}). Fitting final model…",
+        )
+        self._check_cancel()
+        model.fit(b["X_train"], b["y_train"])
+        self._emit(cb, 80, f"Evaluating on {len(b['X_test']):,} held-out test rows…")
+        self._emit(cb, 92, "Computing evaluation metrics…")
+        return cv_arr, model.predict(b["X_test"]), b["y_test"]
+
+    def _run_cv(self, config, params, preprocessing, X_raw, y_raw, cb):
+        n_classes = y_raw.nunique() if config.task == TaskType.CLASSIFICATION else None
         cv = recommend_cv_strategy(
             config.task,
-            len(X_train),
+            len(X_raw),
             n_classes=n_classes,
             is_time_series=config.is_time_series,
-            n_splits=min(config.cv_splits, 3),
+            n_splits=config.cv_splits,
         )
-        scoring = self._scoring_for_task(config.task)
+        scoring = scoring_for_task(config.task)
+        n_folds = getattr(cv, "n_splits", config.cv_splits)
+        self._emit(
+            cb,
+            40,
+            f"Cross-validation ({type(cv).__name__}, {n_folds} folds, scoring={scoring}) "
+            f"on {len(X_raw):,} training rows…",
+        )
+        self._check_cancel()
 
-        if config.tune_method == "optuna":
-            try:
-                from ml_studio.core.training.tuning import OptunaTuner
-            except Exception as exc:
-                logger.warning("Optuna unavailable: %s", exc)
-                if progress_callback:
-                    progress_callback(28, "Optuna not installed — skipping tuning")
-                return dict(config.hyperparameters)
+        def factory():
+            return get_model(config.model_id, **params)
 
-            if progress_callback:
-                progress_callback(25, f"Optuna tuning ({config.tune_trials} trials)…")
-            tuner = OptunaTuner(
-                config.model_id,
-                clean_space,
-                scoring=scoring,
-                n_trials=max(1, int(config.tune_trials)),
-            )
-            if self._cancelled:
-                tuner.cancel()
+        return cross_val_score_leakfree(
+            factory,
+            preprocessing,
+            X_raw,
+            y_raw,
+            cv,
+            scoring,
+            task=config.task,
+            target_column=config.target_column or "",
+        )
 
-            def tune_progress(trial_n: int, msg: str) -> None:
-                pct = 25 + min(10, int(10 * trial_n / max(config.tune_trials, 1)))
-                if progress_callback:
-                    progress_callback(pct, msg)
-
-            result = tuner.tune(X_train, y_train, cv, progress_callback=tune_progress)
-            if progress_callback:
-                progress_callback(
-                    35,
-                    f"Best tune score={result.best_score:.4f} params={result.best_params}",
-                )
-            return result.best_params
-
-        from itertools import product
-
-        keys = list(clean_space.keys())
-        combos = list(product(*(clean_space[k] for k in keys)))
-        if len(combos) > 40:
-            combos = combos[:40]
-        if progress_callback:
-            progress_callback(25, f"Grid search over {len(combos)} combinations…")
-
-        best_score = float("-inf")
-        best_params: dict[str, Any] = {}
-        for i, combo in enumerate(combos):
-            if self._cancelled:
-                raise InterruptedError("Training cancelled by user")
-            params = dict(zip(keys, combo))
-            model = get_model(config.model_id, **params)
-            scores = cross_val_score(model, X_train, y_train, cv=cv, scoring=scoring, n_jobs=1)
-            score = float(np.mean(scores))
-            if score > best_score:
-                best_score = score
-                best_params = params
-            if progress_callback and i % max(1, len(combos) // 5) == 0:
-                progress_callback(
-                    25 + int(10 * (i + 1) / len(combos)),
-                    f"Grid {i + 1}/{len(combos)}: {score:.4f}",
-                )
-        if progress_callback:
-            progress_callback(35, f"Best grid score={best_score:.4f}")
-        return best_params or dict(config.hyperparameters)
-
-    def _scoring_for_task(self, task: TaskType) -> str:
-        return {
-            TaskType.REGRESSION: "r2",
-            TaskType.CLASSIFICATION: "f1_weighted",
-            TaskType.TIME_SERIES: "r2",
-        }.get(task, "r2")
-
-    def _compute_metrics(
-        self,
-        task: TaskType,
-        model,
-        X_train,
-        preds,
-        y_test,
-        y_train,
-    ) -> dict[str, Any]:
+    def _compute_metrics(self, task, model, X_train, preds, y_test, y_train):
         from ml_studio.core.evaluation.metrics import compute_metrics
 
-        if task in (TaskType.CLUSTERING, TaskType.ANOMALY_DETECTION):
+        if task in _UNSUPERVISED:
             return compute_metrics(task, y_true=None, y_pred=preds, X=X_train, model=model)
         return compute_metrics(task, y_true=y_test, y_pred=preds)
+
+    def _check_cancel(self) -> None:
+        if self._cancelled:
+            raise InterruptedError("Training cancelled by user")
+
+    @staticmethod
+    def _emit(cb, pct: int, msg: str) -> None:
+        if cb:
+            cb(pct, msg)
+
+    @staticmethod
+    def _emit_done(cb, metrics: dict) -> None:
+        if not cb:
+            return
+        primary = (
+            metrics.get("r2")
+            or metrics.get("f1")
+            or metrics.get("accuracy")
+            or metrics.get("silhouette")
+        )
+        summary = f"{primary:.4f}" if isinstance(primary, float) else "done"
+        cb(100, f"Training complete — primary score: {summary}")
+
+
+def _dropna_xy(X, y):
+    if y is None:
+        return X.dropna(), None
+    mask = X.notna().all(axis=1) & y.notna()
+    return X.loc[mask], y.loc[mask]

@@ -1,0 +1,18 @@
+Project: Machine Learning Studio (PyQt6 + scikit-learn), Python 3.10+.
+
+Architecture
+- gui/ and app/ may import core/. core/ must NEVER import PyQt6. transforms/ must not import gui/.
+- Heavy work (> ~100 ms) runs in gui/workers/*, never on the UI thread.
+- Fitted state is learned from TRAINING data only. No leakage. Models/pipelines persist via joblib in artifacts; project files store config only.
+
+Rules (enforced by scripts/check_rules.py)
+- Files <= 400 lines, functions <= 40 lines, classes <= 300 lines.
+- No TODO/FIXME/placeholder code.
+- No hex colors outside app/theme_tokens.py and assets/themes/*.qss. Use color_token() or QSS objectNames.
+
+Workflow
+- Every bug fix ships with a failing-first regression test in ml_studio/tests/.
+- After changes run: pytest ml_studio/tests -q -x  and  python scripts/check_rules.py
+- Keep diffs small, one concern per change, do not refactor unrelated code.
+- Never claim a task is done while tests fail.
+- Only touch files named in the task unless you explain why first.

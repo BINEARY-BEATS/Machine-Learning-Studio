@@ -82,12 +82,14 @@ def test_app_controller_build_training_worker_with_pipeline(container):
         task=TaskType.CLASSIFICATION,
         target_column="target",
         feature_columns=["feature1"],
-        model_id="Random Forest",
+        model_id="logistic_regression",
         hyperparameters={},
         test_size=0.2
     )
     pages["train"].build_config.return_value = mock_config
-    pages["prepare"].pipeline = Pipeline(steps=[("scaler", MagicMock())])
+    from ml_studio.transforms.missing import Impute
+    step = Impute(strategy="mean", columns=["feature1"])
+    pages["prepare"].pipeline = Pipeline(steps=[step])
     
     controller.current_dataset = MagicMock()
     controller.current_dataset.dataframe = pd.DataFrame({"feature1": list(range(20)), "target": [0,1]*10})
@@ -96,6 +98,8 @@ def test_app_controller_build_training_worker_with_pipeline(container):
     assert worker is not None
     assert worker.preprocessing is not None
     assert len(worker.preprocessing.steps) == 1
+    assert worker.preprocessing.steps[0] is not step
+    assert worker.preprocessing.steps[0]._is_fitted is False
 
 def test_app_controller_on_dataset_loaded(container):
     controller = AppController(container)

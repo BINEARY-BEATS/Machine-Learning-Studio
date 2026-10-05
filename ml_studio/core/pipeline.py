@@ -47,6 +47,16 @@ class Pipeline(BaseEstimator, TransformerMixin):
         self.steps.append(step)
         return self
 
+    def clone_unfitted(self) -> "Pipeline":
+        """Rebuild every step from class name + params. Never share instances."""
+        clones: list[BaseTransform] = []
+        for step in self.steps:
+            cls = get_transform(type(step).__name__)
+            new_step = cls(**dict(step.params))
+            new_step.enabled = getattr(step, "enabled", True)
+            clones.append(new_step)
+        return Pipeline(steps=clones)
+
     def _active_steps(self) -> list[BaseTransform]:
         return [s for s in self.steps if getattr(s, "enabled", True)]
 
