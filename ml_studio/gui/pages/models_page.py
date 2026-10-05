@@ -314,19 +314,49 @@ class ModelsPage(BasePage):
     def _action_export(self) -> None:
         if not getattr(self, "_selected_model", None):
             return
-        from PyQt6.QtWidgets import QFileDialog, QMessageBox
         from pathlib import Path
-        import shutil
-        
-        save_path, _ = QFileDialog.getSaveFileName(self, "Export Model Directory", f"{self._selected_model.name}.zip", "ZIP Archives (*.zip)")
+
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
+
+        from ml_studio.core.persistence.exporters import export_joblib
+
+        save_path, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export model",
+            f"{self._selected_model.name}",
+            "ZIP archive (*.zip);;Joblib InferencePipeline (*.joblib)",
+        )
         if not save_path:
             return
-        
         try:
             artifact_dir = Path(self._selected_model.artifact_dir)
-            if save_path.endswith('.zip'):
-                save_path = save_path[:-4]
-            shutil.make_archive(save_path, 'zip', artifact_dir)
-            QMessageBox.information(self, "Export Successful", f"Model exported successfully to:\n{save_path}.zip")
+            if selected_filter.startswith("Joblib") or save_path.endswith(".joblib"):
+                if not save_path.endswith(".joblib"):
+                    save_path += ".joblib"
+                pipe = self._registry.load_pipeline(self._selected_model.model_id)
+                export_joblib(pipe, Path(save_path))
+                card = (
+                    f"Model: {self._selected_model.name}\n"
+                    f"Task: {self._selected_model.task.value}\n"
+                    f"Pipeline hash: {getattr(self._selected_model, 'pipeline_hash', '') or '—'}\n"
+                    f"Metrics: {self._selected_model.metrics}"
+                )
+                QMessageBox.information(
+                    self,
+                    "Export Successful",
+                    f"InferencePipeline exported to:\n{save_path}\n\n{card}",
+                )
+            else:
+                import shutil
+
+                if save_path.endswith(".zip"):
+                    save_path = save_path[:-4]
+                shutil.make_archive(save_path, "zip", artifact_dir)
+                QMessageBox.information(
+                    self,
+                    "Export Successful",
+                    f"Model exported to:\n{save_path}.zip\n"
+                    f"Pipeline hash: {getattr(self._selected_model, 'pipeline_hash', '') or '—'}",
+                )
         except Exception as e:
             QMessageBox.critical(self, "Export Failed", f"Failed to export model:\n{e}")

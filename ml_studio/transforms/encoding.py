@@ -45,17 +45,31 @@ class OneHot(BaseTransform):
             self.categories_[col] = cats
 
     def _transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        # Build all dummy columns at once — per-column insert fragments the frame
+        # and floods PerformanceWarning on high-cardinality categoricals.
+        drop_cols: list[str] = []
+        parts: list[pd.DataFrame] = []
         for col in self.fitted_columns_:
+            if col not in X.columns:
+                continue
             cats = self.categories_.get(col, [])
+            drop_cols.append(col)
+            if not cats:
+                continue
+            series = X[col]
+            dummy_data = {}
             for cat in cats:
-                # Handle NA as category if it was in top cats
                 if pd.isna(cat):
-                    new_col_name = f"{col}_nan"
-                    X[new_col_name] = X[col].isna().astype(int)
+                    dummy_data[f"{col}_nan"] = series.isna().astype(np.int8)
                 else:
-                    new_col_name = f"{col}_{cat}"
-                    X[new_col_name] = (X[col] == cat).astype(int)
-            X = X.drop(columns=[col])
+                    # Stringify cat for safe column names that match get_output_columns
+                    dummy_data[f"{col}_{cat}"] = (series == cat).astype(np.int8)
+            parts.append(pd.DataFrame(dummy_data, index=X.index))
+
+        if drop_cols:
+            X = X.drop(columns=drop_cols)
+        if parts:
+            X = pd.concat([X, *parts], axis=1)
         return X
 
     def get_output_columns(self, input_columns: list[str]) -> list[str]:
@@ -210,14 +224,24 @@ class Hashing(BaseTransform):
         ]
 
     def _transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        drop_cols: list[str] = []
+        parts: list[pd.DataFrame] = []
         for col in self.fitted_columns_:
-            hashed = X[col].astype(str).apply(
-                lambda x: int(hashlib.md5(x.encode('utf-8')).hexdigest(), 16) % self.n_features
+            if col not in X.columns:
+                continue
+            hashed = X[col].astype(str).map(
+                lambda x: int(hashlib.md5(x.encode("utf-8")).hexdigest(), 16) % self.n_features
             )
-            # Create one-hot like columns for the hash bins
-            for i in range(self.n_features):
-                X[f"{col}_hash_{i}"] = (hashed == i).astype(int)
-            X = X.drop(columns=[col])
+            drop_cols.append(col)
+            dummy_data = {
+                f"{col}_hash_{i}": (hashed == i).astype(np.int8)
+                for i in range(self.n_features)
+            }
+            parts.append(pd.DataFrame(dummy_data, index=X.index))
+        if drop_cols:
+            X = X.drop(columns=drop_cols)
+        if parts:
+            X = pd.concat([X, *parts], axis=1)
         return X
 
     def get_output_columns(self, input_columns: list[str]) -> list[str]:

@@ -146,6 +146,7 @@ class MainWindow(QMainWindow):
         self._pages["data"]._profile_btn.clicked.connect(self._profile_dataset)
         self._pages["train"]._train_btn.clicked.connect(self._start_training)
         self._pages["train"].train_requested.connect(self._start_training)
+        self._pages["train"].automl_requested.connect(self._run_automl)
         self._pages["models"]._refresh_btn.clicked.connect(
             lambda: self._pages["models"].refresh(self.controller.registry)
         )
@@ -156,7 +157,16 @@ class MainWindow(QMainWindow):
         self._progress.cancel_requested.connect(self._cancel_active_task)
 
     def _cancel_active_task(self) -> None:
+        """Dismiss progress immediately; worker interrupt continues in background."""
         self.controller.cancel_active_worker()
+        self._progress.end()
+        self._sidebar.set_run_state("idle")
+        train = self._pages.get("train")
+        if train is not None and hasattr(train, "set_automl_busy"):
+            if not train._automl_btn.isEnabled():
+                train.set_automl_busy(False, "Cancelling…")
+        self._toast.show_message("Cancelling…", variant="warning")
+        self._status.set_message("Cancelling…")
 
     def _on_model_predict_requested(self, model_id: str) -> None:
         try:
@@ -319,6 +329,8 @@ class MainWindow(QMainWindow):
                     self._navigate("home")
                 self._toast.show_message("Project opened", variant="success")
                 self._pages["home"].refresh_stats(self.controller, self._pages)
+                if hasattr(self._pages["evaluate"], "load_persisted_runs"):
+                    self._pages["evaluate"].load_persisted_runs()
         except Exception as exc:
             QMessageBox.critical(self, "Error", str(exc))
 
@@ -382,6 +394,7 @@ class MainWindow(QMainWindow):
             return
         self._pages["data"].set_loading(True, "Profiling dataset…")
         self._progress.begin("Profiling dataset", "Computing statistics and quality issues…")
+        self._sidebar.set_run_state("profiling")
         self.controller.start_worker(
             worker,
             self._on_profile_complete,
@@ -393,7 +406,65 @@ class MainWindow(QMainWindow):
     def _on_profile_complete(self, result) -> None:
         self._pages["data"].set_loading(False)
         self._pages["data"].apply_profile_result(result)
+        self._sidebar.set_run_state("ready")
         self._toast.show_message("Profile updated", variant="success")
+
+    def _run_automl(self) -> None:
+        """Run AutoML in a background worker so the UI stays responsive."""
+        if not self.controller.current_dataset:
+            self._toast.show_message("Import a dataset first.", variant="warning")
+            return
+        train = self._pages["train"]
+        config = train.build_config()
+        if config is None:
+            self._toast.show_message("Select target, features, and task first.", variant="warning")
+            return
+        from ml_studio.gui.workers.automl_worker import AutoMLWorker
+
+        worker = AutoMLWorker(
+            self.controller.current_dataset.dataframe,
+            config,
+            max_models=5,
+            max_runtime_seconds=180,
+        )
+        train.set_automl_busy(True, "AutoML running in background — UI stays responsive.")
+        self._sidebar.set_run_state("training")
+        self._progress.begin(
+            "AutoML leaderboard",
+            f"{config.task.value} · target {config.target_column} · up to 5 models",
+        )
+        self.controller.start_worker(
+            worker,
+            self._on_automl_complete,
+            self._on_worker_progress,
+            self._on_worker_error,
+            self._on_worker_finished,
+        )
+
+    def _on_automl_complete(self, result) -> None:
+        train = self._pages["train"]
+        train.set_automl_busy(False)
+        train.show_automl_leaderboard(result.entries)
+        self._sidebar.set_run_state("ready")
+        if result.best_model_id:
+            from ml_studio.core.training.registry import MODEL_REGISTRY
+
+            meta = MODEL_REGISTRY.get(result.best_model_id)
+            if meta:
+                idx = train._model_combo.findText(meta.name)
+                if idx >= 0:
+                    train._model_combo.setCurrentIndex(idx)
+            self._toast.show_message(
+                f"AutoML best: {meta.name if meta else result.best_model_id} — "
+                "review Run step, then Start Training.",
+                variant="success",
+            )
+            train._goto_step(len(train.STEPS) - 1)
+        else:
+            self._toast.show_message(
+                "AutoML finished with no successful models.",
+                variant="warning",
+            )
 
     def _start_training(self) -> None:
         if not self.controller.validate_training(self._pages, self):
@@ -402,6 +473,7 @@ class MainWindow(QMainWindow):
         if worker is None:
             return
         train_page = self._pages["train"]
+        self._sidebar.set_run_state("training")
         self.controller.start_worker(
             worker,
             self._on_training_complete,
@@ -417,9 +489,11 @@ class MainWindow(QMainWindow):
     def _on_training_complete(self, result) -> None:
         saved, message = self.controller.on_training_complete(result, self._pages)
         if not saved:
+            self._sidebar.set_run_state("failed")
             self._toast.show_message(message, variant="warning")
             QMessageBox.warning(self, "Quality gate", message)
             return
+        self._sidebar.set_run_state("ready")
         self._navigate("evaluate")
         self._toast.show_message(message, variant="success")
 
@@ -469,6 +543,13 @@ class MainWindow(QMainWindow):
     def _on_worker_finished(self) -> None:
         self._progress.end()
         self._pages["data"].set_loading(False)
+        # Re-enable AutoML button if a run ended without going through complete
+        train = self._pages.get("train")
+        if train is not None and hasattr(train, "set_automl_busy"):
+            if not train._automl_btn.isEnabled():
+                # Only reset if still marked busy and no fresh success message
+                if "running" in (train._automl_status.text() or "").lower():
+                    train.set_automl_busy(False, "AutoML stopped.")
         if self._followup_profile:
             self._followup_profile = False
             self._profile_dataset(auto=True)
@@ -476,8 +557,16 @@ class MainWindow(QMainWindow):
     def _on_worker_error(self, msg: str) -> None:
         self._progress.end()
         self._pages["data"].set_loading(False)
-        if "cancelled" in msg.lower():
-            self._toast.show_message("Task cancelled", variant="warning")
+        train = self._pages.get("train")
+        cancelled = "cancel" in msg.lower()
+        if train is not None and hasattr(train, "set_automl_busy"):
+            train.set_automl_busy(
+                False,
+                "AutoML cancelled." if cancelled else f"AutoML failed: {msg}",
+            )
+        self._sidebar.set_run_state("idle" if cancelled else "failed")
+        if cancelled:
+            self._toast.show_message("Cancelled", variant="warning")
             self._status.set_message("Cancelled")
             return
         self._toast.show_message(f"Task failed: {msg}", variant="danger")

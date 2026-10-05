@@ -34,18 +34,17 @@ def test_top_bar_breadcrumb(qtbot):
     assert "›" in bar._breadcrumb.text()
 
 
-def test_predict_drift_is_coming_soon(qtbot, container):
+def test_predict_drift_tab_has_psi_controls(qtbot, container):
     page = PredictPage(container)
     qtbot.addWidget(page)
-    # Drift is tab index 3
     page._tabs.set_index(3)
-    drift = page._tabs.widget(3)
-    assert "Coming soon" in drift.findChildren(__import__("PyQt6.QtWidgets", fromlist=["QLabel"]).QLabel)[0].text() or True
-    # Find any label with Coming soon
-    from PyQt6.QtWidgets import QLabel
+    from PyQt6.QtWidgets import QLabel, QPushButton
 
     texts = [w.text() for w in page.findChildren(QLabel)]
-    assert any("Coming soon" in t for t in texts)
+    assert any("PSI" in t or "Drift" in t or "drift" in t for t in texts)
+    assert any("Compute drift" in b.text() for b in page.findChildren(QPushButton))
+    assert hasattr(page, "_drift_table")
+    assert page._drift_table.columnCount() == 4
 
 
 def test_predict_bind_shows_tabs(qtbot, container):

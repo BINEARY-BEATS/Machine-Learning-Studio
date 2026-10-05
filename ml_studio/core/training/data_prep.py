@@ -1,6 +1,9 @@
-"""Prepare tabular data for sklearn training."""
+"""Prepare tabular data for sklearn training — leakage-safe encoding."""
 
 from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
 
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
@@ -8,19 +11,91 @@ from sklearn.preprocessing import LabelEncoder
 from ml_studio.core.training.task import TaskType
 
 
-def prepare_for_training(
+@dataclass
+class EncodingBundle:
+    """Fitted feature/target LabelEncoders — fit on train only, reused at predict."""
+
+    feature_encoders: dict[str, LabelEncoder] = field(default_factory=dict)
+    target_encoder: LabelEncoder | None = None
+    feature_columns: list[str] = field(default_factory=list)
+    target_column: str = ""
+
+    def transform_features(self, X: pd.DataFrame) -> pd.DataFrame:
+        out = X.copy()
+        for col, le in self.feature_encoders.items():
+            if col not in out.columns:
+                continue
+            raw = out[col].astype(str)
+            known = set(le.classes_)
+            # Unseen categories → most frequent class index (0) to avoid crash
+            mapped = raw.map(lambda v, _le=le, _known=known: (
+                int(_le.transform([v])[0]) if v in _known else 0
+            ))
+            out[col] = mapped.astype(float)
+        return out
+
+    def transform_target(self, y: pd.Series) -> pd.Series:
+        if self.target_encoder is None:
+            return y
+        return pd.Series(
+            self.target_encoder.transform(y.astype(str)),
+            index=y.index,
+            name=y.name,
+        )
+
+    def inverse_target(self, y_encoded) -> Any:
+        if self.target_encoder is None:
+            return y_encoded
+        import numpy as np
+
+        arr = np.asarray(y_encoded)
+        flat = arr.ravel()
+        decoded = self.target_encoder.inverse_transform(flat.astype(int))
+        if arr.ndim == 0 or (arr.ndim == 1 and arr.shape == ()):
+            return decoded[0]
+        if len(decoded) == 1:
+            return decoded[0]
+        return decoded
+
+    def fit(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series | None,
+        task: TaskType,
+        target_column: str,
+    ) -> EncodingBundle:
+        self.feature_columns = list(X.columns)
+        self.target_column = target_column
+        self.feature_encoders = {}
+        for col in X.columns:
+            if not pd.api.types.is_numeric_dtype(X[col]):
+                le = LabelEncoder()
+                le.fit(X[col].astype(str))
+                self.feature_encoders[col] = le
+        self.target_encoder = None
+        if (
+            y is not None
+            and task == TaskType.CLASSIFICATION
+            and not pd.api.types.is_numeric_dtype(y)
+        ):
+            le_y = LabelEncoder()
+            le_y.fit(y.astype(str))
+            self.target_encoder = le_y
+        return self
+
+
+def select_training_frame(
     df: pd.DataFrame,
     task: TaskType,
     target_column: str | None = None,
     feature_columns: list[str] | None = None,
-) -> tuple[pd.DataFrame, str, list[str], dict]:
+) -> tuple[pd.DataFrame, str, list[str]]:
     """
-    Clean and encode data for training.
+    Column selection and NA cleanup only — no encoding (avoids pre-split leakage).
 
-    Returns (prepared_df, target_column, feature_columns, encoders_meta).
+    Returns (frame, target_column, feature_columns).
     """
     work = df.copy()
-    meta: dict = {"label_encoders": {}}
 
     if task in (TaskType.CLUSTERING, TaskType.ANOMALY_DETECTION):
         if feature_columns:
@@ -32,7 +107,7 @@ def prepare_for_training(
         work = work[cols].dropna()
         if len(work) < 10:
             raise ValueError(f"Need at least 10 rows after cleaning; got {len(work)}.")
-        return work, "", cols, meta
+        return work, "", cols
 
     if not target_column:
         numeric = work.select_dtypes(include="number").columns.tolist()
@@ -53,28 +128,28 @@ def prepare_for_training(
 
     work = work[[target_column] + features].dropna(subset=[target_column])
     if len(work) < 10:
-        raise ValueError(f"Need at least 10 rows after removing missing target values; got {len(work)}.")
+        raise ValueError(
+            f"Need at least 10 rows after removing missing target values; got {len(work)}."
+        )
+    return work, target_column, features
 
-    X_cols: list[str] = []
-    for col in features:
-        if pd.api.types.is_numeric_dtype(work[col]):
-            X_cols.append(col)
-        else:
-            le = LabelEncoder()
-            work[col] = le.fit_transform(work[col].astype(str))
-            meta["label_encoders"][col] = le
-            X_cols.append(col)
 
-    if task == TaskType.CLASSIFICATION and not pd.api.types.is_numeric_dtype(work[target_column]):
-        le_y = LabelEncoder()
-        work[target_column] = le_y.fit_transform(work[target_column].astype(str))
-        meta["label_encoders"][target_column] = le_y
+def prepare_for_training(
+    df: pd.DataFrame,
+    task: TaskType,
+    target_column: str | None = None,
+    feature_columns: list[str] | None = None,
+) -> tuple[pd.DataFrame, str, list[str], dict]:
+    """
+    Backward-compatible helper: select columns only (no full-frame encoding).
 
-    work = work.dropna()
-    if len(work) < 10:
-        raise ValueError(f"Need at least 10 complete rows after encoding; got {len(work)}.")
-
-    return work, target_column, X_cols, meta
+    Encoding is performed inside Trainer on the train split via EncodingBundle.
+    Returns (frame, target_column, feature_columns, empty_meta).
+    """
+    frame, target, features = select_training_frame(
+        df, task, target_column=target_column, feature_columns=feature_columns
+    )
+    return frame, target, features, {"label_encoders": {}}
 
 
 def suggest_training_columns(df: pd.DataFrame) -> tuple[str, list[str], TaskType]:

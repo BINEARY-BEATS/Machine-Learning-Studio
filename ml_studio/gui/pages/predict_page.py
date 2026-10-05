@@ -171,14 +171,89 @@ class PredictPage(BasePage):
         box = QWidget()
         layout = QVBoxLayout(box)
         card = Card("Drift monitoring")
-        label = QLabel(
-            "Coming soon — drift will compare live batch inputs to training "
-            "schema statistics (mean/std, category frequency)."
+        hint = QLabel(
+            "Compare a batch file to the training feature distribution (PSI / KS). "
+            "Requires a bound model and a CSV/Parquet with the same feature columns."
         )
-        label.setWordWrap(True)
-        card.add_widget(label)
+        hint.setWordWrap(True)
+        card.add_widget(hint)
+        row = QHBoxLayout()
+        self._drift_path = QLineEdit()
+        self._drift_path.setPlaceholderText("Path to batch file…")
+        pick = QPushButton("Browse")
+        pick.setObjectName("GhostButton")
+        pick.clicked.connect(self._pick_drift_file)
+        run = QPushButton("Compute drift")
+        run.setObjectName("PrimaryButton")
+        constrain_primary_button(run)
+        run.clicked.connect(self._run_drift)
+        row.addWidget(self._drift_path, 1)
+        row.addWidget(pick)
+        row.addWidget(run)
+        card.add_layout(row)
+        self._drift_table = QTableWidget()
+        self._drift_table.setColumnCount(4)
+        self._drift_table.setHorizontalHeaderLabels(["Column", "PSI", "KS", "Status"])
+        configure_table_header(
+            self._drift_table.horizontalHeader(),
+            contents_cols=(1, 2, 3),
+            stretch_cols=(0,),
+        )
+        card.add_widget(self._drift_table, stretch=1)
+        self._drift_status = QLabel("")
+        self._drift_status.setObjectName("MonoMetric")
+        card.add_widget(self._drift_status)
         layout.addWidget(card, 1)
         return box
+
+    def _pick_drift_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Drift batch file", str(Path.home()), "Data (*.csv *.parquet)"
+        )
+        if path:
+            self._drift_path.setText(path)
+
+    def _run_drift(self) -> None:
+        if not self._predictor:
+            QMessageBox.warning(self, "Drift", "Bind a trained model first.")
+            return
+        path = self._drift_path.text().strip()
+        if not path:
+            QMessageBox.warning(self, "Drift", "Choose a batch file.")
+            return
+        try:
+            from ml_studio.core.evaluation.drift import drift_report
+
+            win = self.window()
+            controller = getattr(win, "controller", None)
+            if controller is None or controller.current_dataset is None:
+                QMessageBox.warning(self, "Drift", "Load the training dataset for reference.")
+                return
+            ref = controller.current_dataset.dataframe
+            p = Path(path)
+            cur = pd.read_csv(p) if p.suffix.lower() == ".csv" else pd.read_parquet(p)
+            cols = list(
+                getattr(self._predictor.pipeline, "input_feature_columns", None)
+                or self._features
+            )
+            report = drift_report(ref, cur, columns=[c for c in cols if c in ref.columns])
+            self._drift_status.setText(
+                f"Overall: {report['overall'].upper()}  ·  "
+                f"{report['n_drift']} drift / {report['n_shift']} shift / {report['n_columns']} cols"
+            )
+            rows = report["columns"]
+            self._drift_table.setRowCount(len(rows))
+            for i, r in enumerate(rows):
+                self._drift_table.setItem(i, 0, QTableWidgetItem(r["column"]))
+                self._drift_table.setItem(
+                    i, 1, QTableWidgetItem("—" if r["psi"] is None else f"{r['psi']:.4f}")
+                )
+                self._drift_table.setItem(
+                    i, 2, QTableWidgetItem("—" if r["ks"] is None else f"{r['ks']:.4f}")
+                )
+                self._drift_table.setItem(i, 3, QTableWidgetItem(r["status"]))
+        except Exception as exc:
+            QMessageBox.critical(self, "Drift failed", str(exc))
 
     def bind_predictor(self, predictor, features: list[str], task) -> None:
         self._predictor = predictor

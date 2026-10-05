@@ -10,15 +10,17 @@ from pathlib import Path
 from typing import Any
 
 import joblib
+import numpy as np
 import pandas as pd
 
 from ml_studio.core.pipeline import Pipeline
+from ml_studio.core.training.data_prep import EncodingBundle
 from ml_studio.core.training.task import TaskType
 
 
 @dataclass
 class InferencePipeline:
-    """Complete inference artifact: preprocessing + estimator + schema."""
+    """Complete inference artifact: preprocessing + encoders + estimator + schema."""
 
     estimator: Any
     preprocessing: Pipeline | None
@@ -26,15 +28,47 @@ class InferencePipeline:
     target_column: str
     task: TaskType
     feature_schema: dict[str, Any] = field(default_factory=dict)
+    encoding: EncodingBundle | None = None
+    input_feature_columns: list[str] = field(default_factory=list)
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
-        X = X[self.feature_columns] if self.feature_columns else X
-        if self.preprocessing:
-            return self.preprocessing.transform(X)
-        return X
+        """Apply fitted prep + feature encoders (never re-fit)."""
+        work = X.copy()
+        raw_cols = self.input_feature_columns or self.feature_columns
+        if self.preprocessing is not None:
+            present = [c for c in raw_cols if c in work.columns]
+            if present:
+                # Keep extra columns prep might need; prefer declared input order
+                ordered = [c for c in raw_cols if c in work.columns]
+                work = work[ordered]
+            work = self.preprocessing.transform(work)
+        elif raw_cols:
+            ordered = [c for c in raw_cols if c in work.columns]
+            if ordered:
+                work = work[ordered]
+
+        cols = self.feature_columns
+        for col in cols:
+            if col not in work.columns:
+                work[col] = np.nan
+        work = work[cols]
+        if self.encoding is not None:
+            work = self.encoding.transform_features(work)
+        return work
 
     def predict(self, X: pd.DataFrame):
-        return self.estimator.predict(self.transform(X))
+        """Predict and inverse-transform classification labels when encoded."""
+        Xt = self.transform(X)
+        raw = self.estimator.predict(Xt)
+        if self.encoding is not None and self.encoding.target_encoder is not None:
+            return self.encoding.inverse_target(raw)
+        return raw
+
+    def predict_proba(self, X: pd.DataFrame):
+        Xt = self.transform(X)
+        if not hasattr(self.estimator, "predict_proba"):
+            raise AttributeError("Estimator has no predict_proba")
+        return self.estimator.predict_proba(Xt)
 
     def save(self, directory: Path) -> Path:
         directory = Path(directory)
@@ -43,9 +77,17 @@ class InferencePipeline:
         joblib.dump(self, artifact_path)
         meta = {
             "feature_columns": self.feature_columns,
+            "input_feature_columns": self.input_feature_columns,
             "target_column": self.target_column,
             "task": self.task.value,
             "feature_schema": self.feature_schema,
+            "has_encoding": self.encoding is not None,
+            "has_target_encoder": bool(
+                self.encoding and self.encoding.target_encoder is not None
+            ),
+            "encoded_features": list(self.encoding.feature_encoders.keys())
+            if self.encoding
+            else [],
         }
         with (directory / "metadata.json").open("w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2)
@@ -72,6 +114,7 @@ class ModelVersion:
     tags: list[str] = field(default_factory=list)
     notes: str = ""
     artifact_dir: str = ""
+    pipeline_hash: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -89,6 +132,7 @@ class ModelVersion:
             "tags": self.tags,
             "notes": self.notes,
             "artifact_dir": self.artifact_dir,
+            "pipeline_hash": self.pipeline_hash,
         }
 
     @classmethod
@@ -110,4 +154,5 @@ class ModelVersion:
             tags=data.get("tags", []),
             notes=data.get("notes", ""),
             artifact_dir=data.get("artifact_dir", ""),
+            pipeline_hash=data.get("pipeline_hash", ""),
         )

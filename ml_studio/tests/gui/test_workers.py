@@ -59,7 +59,7 @@ def test_training_worker():
     assert res == "trained_model"
 
 
-@patch("ml_studio.gui.workers.training_worker.prepare_for_training")
+@patch("ml_studio.gui.workers.training_worker.select_training_frame")
 def test_training_worker_prepares_data(mock_prep):
     from ml_studio.core.training.task import TaskType
     from ml_studio.core.training.trainer import TrainingConfig
@@ -72,7 +72,7 @@ def test_training_worker_prepares_data(mock_prep):
         hyperparameters={},
         test_size=0.2,
     )
-    mock_prep.return_value = (MagicMock(name="prepared"), "y", ["x"], None)
+    mock_prep.return_value = (MagicMock(name="prepared"), "y", ["x"])
     worker = TrainingWorker(MagicMock(name="raw"), config, None, prepare_data=True)
     worker._trainer = MagicMock()
     worker._trainer.train.return_value = "ok"

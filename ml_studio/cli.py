@@ -76,6 +76,25 @@ def main():
     prof_parser.add_argument("--out", help="Output file path for JSON profile")
     prof_parser.add_argument("--json", action="store_true", help="Print raw JSON to stdout")
 
+    # Train / evaluate / predict / automl
+    train_parser = subparsers.add_parser("train", help="Train a model (leakage-safe Trainer)")
+    train_parser.add_argument("project", help="Project name")
+    train_parser.add_argument("--model", default="logistic_regression", help="Model registry id")
+    train_parser.add_argument("--tune", default="none", choices=["none", "grid", "optuna"])
+    train_parser.add_argument("--test-size", type=float, default=0.2)
+
+    eval_parser = subparsers.add_parser("evaluate", help="Show metrics from last train")
+    eval_parser.add_argument("project", help="Project name")
+
+    pred_parser = subparsers.add_parser("predict", help="Batch predict with last trained model")
+    pred_parser.add_argument("project", help="Project name")
+    pred_parser.add_argument("source", help="CSV/Parquet path")
+    pred_parser.add_argument("--out", help="Output CSV path")
+
+    automl_parser = subparsers.add_parser("automl", help="AutoML leaderboard then train best")
+    automl_parser.add_argument("project", help="Project name")
+    automl_parser.add_argument("--max-models", type=int, default=5)
+
     args = parser.parse_args()
 
     if args.command == "project":
@@ -194,6 +213,24 @@ def main():
                 sys.exit(1)
             p.apply_pipeline(p.pipeline)
             print("Pipeline applied. Data transformed and saved.")
+
+    elif args.command == "train":
+        p = Project.open(args.project)
+        result = p.train(model_id=args.model, tune_method=args.tune, test_size=args.test_size)
+        print(f"Trained {args.model} in {result.training_duration:.1f}s")
+        print(json.dumps(result.metrics, indent=2, default=str))
+    elif args.command == "evaluate":
+        p = Project.open(args.project)
+        print(json.dumps(p.evaluate(), indent=2, default=str))
+    elif args.command == "predict":
+        p = Project.open(args.project)
+        out = p.predict(args.source, args.out)
+        print(f"Predictions written to {out}")
+    elif args.command == "automl":
+        p = Project.open(args.project)
+        result = p.automl(max_models=args.max_models)
+        print(f"AutoML trained {result.model_id}")
+        print(json.dumps(result.metrics, indent=2, default=str))
 
 if __name__ == "__main__":
     main()

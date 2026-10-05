@@ -308,7 +308,7 @@ def _overlay_qss(p, s, r) -> str:
     QPushButton#PillTab {{
         background-color: {p.surface_raised};
         border: 1px solid {p.border_subtle};
-        border-radius: {r['full']}px;
+        border-radius: {r['md']}px;
         padding: {s[2]}px {s[4]}px;
         color: {p.text_muted};
     }}
@@ -339,7 +339,8 @@ def _overlay_qss(p, s, r) -> str:
         text-align: left;
         padding: {s[2]}px {s[3]}px;
         border: none;
-        border-radius: {r['md']}px;
+        border-left: 3px solid transparent;
+        border-radius: 0px;
         background: transparent;
         color: {p.text_muted};
     }}
@@ -348,8 +349,41 @@ def _overlay_qss(p, s, r) -> str:
         color: {p.text};
     }}
     #NavButton[active="true"] {{
-        background-color: {p.primary};
-        color: {p.on_primary};
+        background-color: {p.primary_subtle};
+        border-left: 3px solid {p.primary};
+        color: {p.primary};
+        font-weight: 600;
+    }}
+    #SidebarTitle {{
+        font-size: 14px;
+        font-weight: 700;
+        color: {p.text};
+        letter-spacing: 0.5px;
+    }}
+    #RunStateChip {{
+        font-family: Consolas, 'Cascadia Mono', monospace;
+        font-size: 10px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: {r['sm']}px;
+        border: 1px solid {p.border};
+        color: {p.text_muted};
+        background-color: {p.surface_raised};
+    }}
+    #RunStateChip[runState="idle"] {{ color: {p.text_muted}; }}
+    #RunStateChip[runState="profiling"] {{ color: {p.info}; border-color: {p.info}; }}
+    #RunStateChip[runState="training"] {{ color: {p.warning}; border-color: {p.warning}; }}
+    #RunStateChip[runState="failed"] {{ color: {p.danger}; border-color: {p.danger}; }}
+    #RunStateChip[runState="ready"] {{ color: {p.success}; border-color: {p.success}; }}
+    #MonoMetric {{
+        font-family: Consolas, 'Cascadia Mono', monospace;
+        font-size: 13px;
+        font-weight: 600;
+        color: {p.text};
+    }}
+    #ReadinessRow {{
+        padding: {s[2]}px 0;
+        border-bottom: 1px solid {p.border_subtle};
     }}
     QDialog, QListWidget {{
         background-color: {p.surface};

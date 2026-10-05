@@ -26,7 +26,8 @@ def page(qtbot, container):
 def test_train_steps_exclude_eval_save(page):
     assert "Eval" not in page.STEPS
     assert "Save" not in page.STEPS
-    assert page.STEPS[-1] == "Train"
+    assert page.STEPS == ["Task", "Data", "Model", "Tune", "Run"]
+    assert page.STEPS[-1] == "Run"
 
 
 def test_validate_requires_dataset(page):

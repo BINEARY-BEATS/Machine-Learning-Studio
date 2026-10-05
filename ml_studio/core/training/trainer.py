@@ -1,4 +1,4 @@
-"""Model training engine."""
+"""Model training engine — split first, fit prep/encoders on train only."""
 
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import cross_val_score, train_test_split
-from sklearn.pipeline import Pipeline as SklearnPipeline
 
 from ml_studio.app.logger import get_logger
 from ml_studio.core.pipeline import Pipeline
 from ml_studio.core.training.cv import recommend_cv_strategy
+from ml_studio.core.training.data_prep import EncodingBundle
 from ml_studio.core.training.registry import get_model
 from ml_studio.core.training.task import TaskType
 
@@ -50,6 +50,10 @@ class TrainingResult:
     target_column: str
     train_size: int
     test_size: int
+    encoding: EncodingBundle | None = None
+    input_feature_columns: list[str] = field(default_factory=list)
+    y_true_holdout: Any = None
+    y_pred_holdout: Any = None
 
 
 class Trainer:
@@ -73,48 +77,111 @@ class Trainer:
             raise InterruptedError("Training cancelled by user")
 
         if progress_callback:
-            progress_callback(5, f"Loaded {len(df):,} rows, {len(config.feature_columns)} features, target '{config.target_column}'")
+            progress_callback(
+                5,
+                f"Loaded {len(df):,} rows, {len(config.feature_columns)} features, "
+                f"target '{config.target_column}'",
+            )
 
-        X = df[config.feature_columns]
-        y = df[config.target_column] if config.task not in (
-            TaskType.CLUSTERING,
-            TaskType.ANOMALY_DETECTION,
-        ) else None
+        input_feature_columns = list(config.feature_columns)
+        X_raw = df[input_feature_columns].copy()
+        y_raw = (
+            df[config.target_column].copy()
+            if config.task
+            not in (
+                TaskType.CLUSTERING,
+                TaskType.ANOMALY_DETECTION,
+            )
+            else None
+        )
 
-        if preprocessing:
-            n_steps = len(getattr(preprocessing, "steps", []) or [])
-            if progress_callback:
-                progress_callback(12, f"Applying preprocessing pipeline ({n_steps} step(s))…")
-            if y is not None:
-                X_processed = preprocessing.fit_transform(X, y)
-            else:
-                X_processed = preprocessing.fit_transform(X)
-        else:
-            if progress_callback:
-                progress_callback(12, "No preprocessing pipeline — using prepared features as-is")
-            X_processed = X.copy()
+        # --- Split FIRST (before any fit) to avoid leakage ---
+        encoding = EncodingBundle()
+        fitted_preprocessing: Pipeline | None = None
 
         if config.task in (TaskType.CLUSTERING, TaskType.ANOMALY_DETECTION):
-            X_train = X_processed
-            X_test = pd.DataFrame()
-            y_train = y_test = None
+            X_train_raw, X_test_raw = X_raw, pd.DataFrame()
+            y_train_raw = y_test_raw = None
         else:
             if progress_callback:
-                progress_callback(20, f"Splitting data ({int((1-config.test_size)*100)}% train / {int(config.test_size*100)}% test)…")
+                progress_callback(
+                    15,
+                    f"Splitting data ({int((1 - config.test_size) * 100)}% train / "
+                    f"{int(config.test_size * 100)}% test)…",
+                )
             stratify = None
-            if config.task == TaskType.CLASSIFICATION:
-                class_counts = y.value_counts()
-                if y.nunique() <= 20 and class_counts.min() >= 2:
-                    stratify = y
-            X_train, X_test, y_train, y_test = train_test_split(
-                X_processed,
-                y,
+            if config.task == TaskType.CLASSIFICATION and y_raw is not None:
+                class_counts = y_raw.value_counts()
+                if y_raw.nunique() <= 20 and class_counts.min() >= 2:
+                    stratify = y_raw
+            X_train_raw, X_test_raw, y_train_raw, y_test_raw = train_test_split(
+                X_raw,
+                y_raw,
                 test_size=config.test_size,
                 random_state=config.random_state,
                 stratify=stratify,
             )
 
+        # --- Fit Prepare pipeline on TRAIN only ---
+        if preprocessing is not None and getattr(preprocessing, "steps", None):
+            n_steps = len([s for s in preprocessing.steps if getattr(s, "enabled", True)])
+            if progress_callback:
+                progress_callback(22, f"Fitting preprocessing on train only ({n_steps} step(s))…")
+            fitted_preprocessing = preprocessing
+            if y_train_raw is not None:
+                fitted_preprocessing.fit(X_train_raw, y_train_raw)
+            else:
+                fitted_preprocessing.fit(X_train_raw)
+            X_train = fitted_preprocessing.transform(X_train_raw)
+            X_test = (
+                fitted_preprocessing.transform(X_test_raw)
+                if len(X_test_raw)
+                else X_test_raw
+            )
+        else:
+            if progress_callback:
+                progress_callback(22, "No preprocessing pipeline — using raw features")
+            X_train = X_train_raw.copy()
+            X_test = X_test_raw.copy() if len(X_test_raw) else X_test_raw
+
+        # Align feature columns after prep (columns may change)
+        feature_columns = list(X_train.columns)
+
+        # --- Fit encoders on TRAIN only ---
+        if progress_callback:
+            progress_callback(28, "Fitting feature/target encoders on train only…")
+        encoding.fit(
+            X_train,
+            y_train_raw,
+            config.task,
+            config.target_column or "",
+        )
+        X_train = encoding.transform_features(X_train)
+        if len(X_test):
+            # Ensure test has same columns as train after prep
+            for col in feature_columns:
+                if col not in X_test.columns:
+                    X_test[col] = np.nan
+            X_test = X_test[feature_columns]
+            X_test = encoding.transform_features(X_test)
+
+        y_train = encoding.transform_target(y_train_raw) if y_train_raw is not None else None
+        y_test = encoding.transform_target(y_test_raw) if y_test_raw is not None else None
+
+        # Drop rows with NaN after prep/encode
+        if y_train is not None:
+            train_mask = X_train.notna().all(axis=1) & y_train.notna()
+            X_train = X_train.loc[train_mask]
+            y_train = y_train.loc[train_mask]
+        else:
+            X_train = X_train.dropna()
+        if y_test is not None and len(X_test):
+            test_mask = X_test.notna().all(axis=1) & y_test.notna()
+            X_test = X_test.loc[test_mask]
+            y_test = y_test.loc[test_mask]
+
         from ml_studio.core.training.registry import MODEL_REGISTRY
+
         model_label = MODEL_REGISTRY.get(config.model_id)
         model_name = model_label.name if model_label else config.model_id
         params = dict(config.hyperparameters)
@@ -133,7 +200,7 @@ class Trainer:
             )
 
         if progress_callback:
-            progress_callback(30, f"Building {model_name}…")
+            progress_callback(35, f"Building {model_name}…")
 
         model = get_model(config.model_id, **params)
 
@@ -164,18 +231,44 @@ class Trainer:
             )
             scoring = self._scoring_for_task(config.task)
             cv_name = type(cv).__name__
+            n_folds = getattr(cv, "n_splits", config.cv_splits)
             if progress_callback:
                 progress_callback(
-                    45,
-                    f"Cross-validation ({cv_name}, {config.cv_splits} folds, scoring={scoring}) on {len(X_train):,} training rows…",
+                    40,
+                    f"Cross-validation ({cv_name}, {n_folds} folds, scoring={scoring}) "
+                    f"on {len(X_train):,} training rows — fold 1/{n_folds}…",
                 )
             if self._cancelled:
                 raise InterruptedError("Training cancelled by user")
-            cv_scores_arr = cross_val_score(model, X_train, y_train, cv=cv, scoring=scoring, n_jobs=1)
+            # Fold-by-fold so the UI updates (SVR/RF on large data can take minutes per fold)
+            from sklearn.base import clone
+            from sklearn.metrics import get_scorer
+
+            scorer = get_scorer(scoring)
+            fold_scores: list[float] = []
+            splits = list(cv.split(X_train, y_train))
+            for fi, (tr_idx, te_idx) in enumerate(splits):
+                if self._cancelled:
+                    raise InterruptedError("Training cancelled by user")
+                pct = 40 + int(25 * fi / max(len(splits), 1))
+                if progress_callback:
+                    progress_callback(
+                        pct,
+                        f"CV fold {fi + 1}/{len(splits)} "
+                        f"({cv_name}, scoring={scoring}, "
+                        f"{len(tr_idx):,} train / {len(te_idx):,} val)…",
+                    )
+                est = clone(model)
+                est.fit(X_train.iloc[tr_idx], y_train.iloc[tr_idx])
+                fold_scores.append(
+                    float(scorer(est, X_train.iloc[te_idx], y_train.iloc[te_idx]))
+                )
+            cv_scores_arr = np.asarray(fold_scores, dtype=float)
             if progress_callback:
                 progress_callback(
-                    65,
-                    f"CV complete — mean {scoring}={float(np.mean(cv_scores_arr)):.4f}. Fitting final model…",
+                    68,
+                    f"CV complete — mean {scoring}={float(np.mean(cv_scores_arr)):.4f} "
+                    f"(±{float(np.std(cv_scores_arr)):.4f}). Fitting final model…",
                 )
             if self._cancelled:
                 raise InterruptedError("Training cancelled by user")
@@ -201,10 +294,18 @@ class Trainer:
 
         cv_scores = {}
         if len(cv_scores_arr):
-            cv_scores = {"mean": float(np.mean(cv_scores_arr)), "std": float(np.std(cv_scores_arr))}
+            cv_scores = {
+                "mean": float(np.mean(cv_scores_arr)),
+                "std": float(np.std(cv_scores_arr)),
+            }
 
         if progress_callback:
-            primary = metrics.get("r2") or metrics.get("f1") or metrics.get("accuracy") or metrics.get("silhouette")
+            primary = (
+                metrics.get("r2")
+                or metrics.get("f1")
+                or metrics.get("accuracy")
+                or metrics.get("silhouette")
+            )
             summary = f"{primary:.4f}" if isinstance(primary, float) else "done"
             progress_callback(100, f"Training complete — primary score: {summary}")
 
@@ -216,11 +317,18 @@ class Trainer:
             cv_scores=cv_scores,
             training_duration=duration,
             estimator=model,
-            preprocessing=preprocessing,
-            feature_columns=config.feature_columns,
+            preprocessing=fitted_preprocessing,
+            feature_columns=feature_columns,
             target_column=config.target_column,
             train_size=len(X_train),
             test_size=len(X_test) if len(X_test) else 0,
+            encoding=encoding,
+            input_feature_columns=input_feature_columns,
+            y_true_holdout=y_test_eval,
+            y_pred_holdout=preds if config.task not in (
+                TaskType.CLUSTERING,
+                TaskType.ANOMALY_DETECTION,
+            ) else None,
         )
 
     def _maybe_tune(
@@ -233,7 +341,6 @@ class Trainer:
     ) -> dict[str, Any]:
         """Run Optuna or grid search when a param space exists; else keep defaults."""
         space = dict(getattr(model_label, "hyperparameters", None) or {})
-        # Drop None entries that break categorical suggest (e.g. max_depth)
         clean_space: dict[str, list[Any]] = {}
         for key, values in space.items():
             if not isinstance(values, (list, tuple)) or not values:
@@ -289,7 +396,6 @@ class Trainer:
                 )
             return result.best_params
 
-        # Grid search (small spaces only)
         from itertools import product
 
         keys = list(clean_space.keys())
@@ -312,7 +418,10 @@ class Trainer:
                 best_score = score
                 best_params = params
             if progress_callback and i % max(1, len(combos) // 5) == 0:
-                progress_callback(25 + int(10 * (i + 1) / len(combos)), f"Grid {i+1}/{len(combos)}: {score:.4f}")
+                progress_callback(
+                    25 + int(10 * (i + 1) / len(combos)),
+                    f"Grid {i + 1}/{len(combos)}: {score:.4f}",
+                )
         if progress_callback:
             progress_callback(35, f"Best grid score={best_score:.4f}")
         return best_params or dict(config.hyperparameters)

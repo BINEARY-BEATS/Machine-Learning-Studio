@@ -19,13 +19,15 @@ class MockProject:
 def test_home_page_refresh_stats(qtbot, container):
     page = HomePage(container)
     qtbot.addWidget(page)
-    
+
     container.project_manager.current = MockProject()
-    
+
     mock_controller = MagicMock()
-    mock_controller.current_dataset.row_count = 100
+    mock_controller.current_dataset = None
+    mock_controller.registry.list_models.return_value = []
     page.refresh_stats(mock_controller)
-    assert page._project_card._value.text() == "Test Project"
+    assert "Test Project" in page._row_project[2].text()
+
 
 def test_data_page_set_dataset(qtbot, container):
     page = DataPage(container)
@@ -70,9 +72,21 @@ def test_predict_page_set_predictor(qtbot, container):
     assert "Prediction" in page._result_label.text()
 
 def test_models_page_refresh_list(qtbot, container):
+    from datetime import datetime, timezone
+
+    from ml_studio.core.training.task import TaskType
+
     page = ModelsPage(container)
     qtbot.addWidget(page)
+    mock_model = MagicMock()
+    mock_model.name = "Ridge"
+    mock_model.version = 1
+    mock_model.task = TaskType.REGRESSION
+    mock_model.metrics = {"r2": 0.9}
+    mock_model.dataset_id = "demo"
+    mock_model.training_timestamp = datetime.now(timezone.utc)
+    mock_model.tags = []
     mock_registry = MagicMock()
-    mock_registry.list_models.return_value = [MagicMock()]
+    mock_registry.list_models.return_value = [mock_model]
     page.refresh(mock_registry)
     assert page._table.rowCount() == 1

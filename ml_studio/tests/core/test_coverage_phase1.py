@@ -99,6 +99,24 @@ def test_entropy():
     col = next(c for c in prof.columns if c.name == "binary_target")
     assert col.entropy == pytest.approx(1.0, abs=0.01)
 
+
+def test_profile_boolean_column_no_numpy_subtract():
+    """Bool dtypes are numeric to pandas but quantile uses illegal bool subtract."""
+    df = pd.DataFrame(
+        {
+            "x": list(range(20)),
+            "flag": [True, False] * 10,
+        }
+    )
+    ds = Dataset("bool_prof", "test")
+    ds.set_dataframe(df, reason="test")
+    prof = profile_dataset(ds, use_cache=False)
+    flag = next(c for c in prof.columns if c.name == "flag")
+    assert flag.mean == pytest.approx(0.5)
+    assert flag.q25 is not None
+    assert flag.q75 is not None
+
+
 # ----------------- DATASET -----------------
 
 def test_dataset_versioning():

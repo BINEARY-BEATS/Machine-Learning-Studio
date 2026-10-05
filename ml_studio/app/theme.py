@@ -46,8 +46,14 @@ def apply_theme(app: QApplication, mode: ThemeMode) -> None:
     """Apply global stylesheet and default font to the application."""
     app.setStyleSheet(build_stylesheet(mode))
     body = TYPE["body"]
-    font = QFont(str(body.get("family", "Segoe UI")), int(body["size"]))
-    font.setWeight(int(body["weight"]))
+    # Prefer installed system UI fonts — avoid unresolved family quirks on Windows
+    font = QFont()
+    font.setFamilies(["Segoe UI", "SF Pro Text", "IBM Plex Sans", "sans-serif"])
+    size = int(body.get("size", 13))
+    if size < 1:
+        size = 13
+    font.setPointSize(size)
+    font.setWeight(QFont.Weight(int(body.get("weight", 400))))
     app.setFont(font)
     app.setProperty("themeMode", mode.value)
 

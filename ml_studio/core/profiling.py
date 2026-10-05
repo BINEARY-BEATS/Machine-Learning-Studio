@@ -107,19 +107,37 @@ def profile_dataset(dataset: Dataset, *, use_cache: bool = True) -> DatasetProfi
             unique=int(series.nunique(dropna=True)),
             cardinality=series.nunique(dropna=True) / n_rows if n_rows else 0,
         )
-        if pd.api.types.is_numeric_dtype(series):
+        if pd.api.types.is_numeric_dtype(series) and not pd.api.types.is_bool_dtype(series):
             clean = series.dropna()
             if len(clean):
                 cp.min = float(clean.min())
                 cp.max = float(clean.max())
                 cp.mean = float(clean.mean())
                 cp.median = float(clean.median())
-                cp.std = float(clean.std())
-                cp.q25 = float(clean.quantile(0.25))
-                cp.q75 = float(clean.quantile(0.75))
+                cp.std = float(clean.std()) if len(clean) > 1 else 0.0
+                try:
+                    cp.q25 = float(clean.quantile(0.25))
+                    cp.q75 = float(clean.quantile(0.75))
+                except (TypeError, ValueError):
+                    cp.q25 = cp.q75 = None
                 cp.skew = float(clean.skew()) if len(clean) > 2 else None
                 cp.kurtosis = float(clean.kurtosis()) if len(clean) > 3 else None
-                cp.is_monotonic = bool(clean.is_monotonic_increasing or clean.is_monotonic_decreasing)
+                cp.is_monotonic = bool(
+                    clean.is_monotonic_increasing or clean.is_monotonic_decreasing
+                )
+        elif pd.api.types.is_bool_dtype(series):
+            # Bool is "numeric" to pandas, but quantile/subtract is illegal on bool.
+            clean = series.dropna()
+            if len(clean):
+                as_int = clean.astype("int8")
+                cp.min = float(as_int.min())
+                cp.max = float(as_int.max())
+                cp.mean = float(as_int.mean())
+                cp.median = float(as_int.median())
+                cp.std = float(as_int.std()) if len(as_int) > 1 else 0.0
+                cp.q25 = float(as_int.quantile(0.25))
+                cp.q75 = float(as_int.quantile(0.75))
+
         
         # Calculate entropy (using nats or bits; we use bits with log2)
         # Binning strategy:

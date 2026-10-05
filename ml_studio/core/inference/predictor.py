@@ -25,18 +25,28 @@ class Predictor:
 
     def predict_single(self, features: dict[str, Any], explain: bool = False) -> PredictionResult:
         row = pd.DataFrame([features])
-        X = self.pipeline.transform(row)
-        model = self.pipeline.estimator
-        pred = model.predict(X)[0]
+        # Use InferencePipeline.predict for encode + inverse target labels
+        pred = self.pipeline.predict(row)
+        if hasattr(pred, "__len__") and not isinstance(pred, (str, bytes)):
+            try:
+                pred = pred[0]
+            except Exception:
+                pass
         proba = None
+        model = self.pipeline.estimator
         if hasattr(model, "predict_proba"):
             try:
+                X = self.pipeline.transform(row)
                 proba = model.predict_proba(X)[0].tolist()
             except Exception:
                 pass
         explanation = None
         if explain:
-            explanation = explain_single_prediction(model, X, 0)
+            try:
+                X = self.pipeline.transform(row)
+                explanation = explain_single_prediction(model, X, 0)
+            except Exception:
+                explanation = None
         return PredictionResult(prediction=pred, probabilities=proba, explanation=explanation)
 
     def predict_batch(
@@ -58,8 +68,7 @@ class Predictor:
             for i, chunk in enumerate(pd.read_csv(path, chunksize=chunk_size)):
                 if cancel_check and cancel_check():
                     raise RuntimeError("Batch prediction cancelled")
-                X = self.pipeline.transform(chunk)
-                preds = self.pipeline.estimator.predict(X)
+                preds = self.pipeline.predict(chunk)
                 chunk_out = chunk.copy()
                 chunk_out["prediction"] = preds
                 chunk_out.to_csv(output, mode="w" if i == 0 else "a", header=i == 0, index=False)
@@ -68,15 +77,13 @@ class Predictor:
                     progress_callback(min(99, (i + 1) * 10), f"Processed chunk {i+1}")
             if not chunks_written:
                 df = source.load()
-                X = self.pipeline.transform(df)
-                df["prediction"] = self.pipeline.estimator.predict(X)
+                df["prediction"] = self.pipeline.predict(df)
                 df.to_csv(output, index=False)
         else:
             df = source.load()
             if cancel_check and cancel_check():
                 raise RuntimeError("Batch prediction cancelled")
-            X = self.pipeline.transform(df)
-            df["prediction"] = self.pipeline.estimator.predict(X)
+            df["prediction"] = self.pipeline.predict(df)
             df.to_csv(output, index=False)
 
         if progress_callback:

@@ -2,9 +2,8 @@
 
 ![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![Framework](https://img.shields.io/badge/Framework-PyQt6-green.svg)
-![Tests](https://img.shields.io/badge/tests-287%20collected-brightgreen)
 
-Privacy-first desktop app for **tabular** machine learning: import → prepare → train → evaluate → predict — all local.
+Privacy-first desktop **tabular ML lab** for data scientists: import → prepare → train → evaluate → predict — all local, with leakage-safe training and frozen inference artifacts.
 
 **Author:** Saeed Ur Rehman
 
@@ -12,24 +11,25 @@ Privacy-first desktop app for **tabular** machine learning: import → prepare �
 
 ## What works today
 
-- **Projects** — `.mlstudio` archives store metadata, dataset, schema roles, and prepare pipeline; autosave when a path exists
+- **Correctness (Phase 0)** — Train/test split **before** prep/encoder fit; `InferencePipeline` stores Prepare pipeline + feature/target LabelEncoders; predictions inverse-decode class labels; categorical round-trip tested
+- **Projects** — `.mlstudio` archives store metadata, dataset, schema roles, and prepare pipeline; experiment ledger (`.experiments.json`); autosave when a path exists
 - **Import** — CSV, Excel, Parquet, Feather, Arrow, ORC, SQLite, JSON (optional deps for some formats)
-- **Profiling** — async stats + quality issues; memory dtype optimization
+- **Profiling + plots** — async stats/quality; Data Plots tab (histograms, missingness, correlation)
 - **Prepare** — visual pipeline (impute, encode, scale, outliers, feature eng, selection) + recipes + preview
-- **Train** — Classification, Regression, Clustering, Anomaly Detection; Optuna/Grid tuning when configured; Time Series uses regression models + time-aware CV
-- **Evaluate** — experiment history and metric details
-- **Models / Predict** — registry, single + chunked batch predict, permutation importance (SHAP optional)
-- **GUI** — 8-page shell, Ctrl+K command palette, light/dark themes
+- **Train** — 5-step wizard (Task → Data → Model → Tune → Run); Classification / Regression / Clustering / Anomaly; Optuna/Grid; **AutoML leaderboard** → pick winner → train
+- **Evaluate** — experiment history, metric details, confusion matrix / residual plots
+- **Models / Predict** — registry, joblib/ZIP export with pipeline hash, single + batch predict, permutation importance (SHAP optional), **PSI/KS drift**
+- **CLI** — `train` / `evaluate` / `predict` / `automl` on folder projects (same Trainer path)
+- **GUI** — lab theme (teal-on-graphite), readiness Home, run-state chip, Ctrl+K palette
 
 ## Not finished / limited
 
-- Full AutoML leaderboard UI (core `AutoMLRunner` exists; palette opens Train + Optuna)
-- Drift monitoring tab (labeled Coming soon)
-- Custom Python transform (hidden until implemented)
-- CLI `api.Project.prepare` / `sweep` raise clearly as unimplemented
-- Balancing transforms and some optional ML extras need extra packages
+- Dual persistence remains: GUI `.mlstudio` vs CLI folder `project.json` (CLI train/predict work on folder projects)
+- Custom Python transform still hidden
+- True time-series forecasters (TS = regression models + time CV)
+- Full ONNX UI path (joblib export is primary; ONNX helper exists)
 
-See [REFACTOR_PLAN.md](REFACTOR_PLAN.md) for the upgrade checklist.
+See [REFACTOR_PLAN.md](REFACTOR_PLAN.md) for history.
 
 ---
 
@@ -46,6 +46,8 @@ ml_studio/
 ```
 
 **Import rule:** `gui` / `app` → `core`; never `core` → `gui`.
+
+**Inference contract:** every registered model is an `InferencePipeline` (prep + encoders + estimator). Predict never re-fits.
 
 ---
 
@@ -72,16 +74,19 @@ pip install -r requirements-dev.txt   # optional, for tests
 python main.py
 ```
 
-### CLI (workspace folders with `project.json`)
+### CLI (folder projects with `project.json`)
 
 ```sh
 python -m ml_studio.cli project create myproj
 python -m ml_studio.cli data load data.csv --project myproj
-python -m ml_studio.cli data head myproj -n 5
-python -m ml_studio.cli data info myproj
+python -m ml_studio.cli project set-target myproj y
+python -m ml_studio.cli train myproj --model logistic_regression
+python -m ml_studio.cli evaluate myproj
+python -m ml_studio.cli predict myproj batch.csv --out scored.csv
+python -m ml_studio.cli automl myproj
 ```
 
-Note: the GUI uses `.mlstudio` zip projects; the CLI uses a separate directory-based `api.Project`.
+Note: the GUI uses `.mlstudio` zip projects; the CLI uses directory-based `api.Project`. Both use the same `Trainer` / `InferencePipeline` correctness path.
 
 ---
 
@@ -91,15 +96,7 @@ Note: the GUI uses `.mlstudio` zip projects; the CLI uses a separate directory-b
 pytest ml_studio/tests --cov=ml_studio/core
 ```
 
-Core coverage target: **80%+**.
-
----
-
-## Benchmarks
-
-```sh
-python ml_studio/tests/benchmarks/benchmark_io.py
-```
+Correctness suite: `ml_studio/tests/core/test_correctness_phase0.py`, `test_e2e_categorical.py`.
 
 ---
 
@@ -108,7 +105,7 @@ python ml_studio/tests/benchmarks/benchmark_io.py
 1. Create/open a project  
 2. Import dataset → wait for async profile → set target role on Prepare  
 3. Build preprocessing pipeline (optional)  
-4. Train (validate wizard steps; optional Optuna/Grid) → Evaluate  
-5. Predict (single / batch) → export from Models  
+4. Train or AutoML → Evaluate (plots + durable runs)  
+5. Predict (single / batch / drift) → export from Models  
 
-For upgrade history and remaining polish, see [REFACTOR_PLAN.md](REFACTOR_PLAN.md).
+For upgrade history, see [REFACTOR_PLAN.md](REFACTOR_PLAN.md).

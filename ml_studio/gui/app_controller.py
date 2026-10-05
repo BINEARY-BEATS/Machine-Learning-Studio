@@ -39,7 +39,8 @@ class AppController:
         if self._active_thread is not None:
             if self._active_thread.isRunning():
                 self._active_thread.quit()
-                self._active_thread.wait(3000)
+                # Brief wait only — never block the UI for seconds on Cancel.
+                self._active_thread.wait(200)
             self._active_thread = None
 
     def start_worker(self, worker, on_result, progress_cb, error_cb, finished_cb) -> None:
@@ -56,6 +57,7 @@ class AppController:
             self._active_worker.cancel()
         if self._active_thread is not None and self._active_thread.isRunning():
             self._active_thread.requestInterruption()
+        # Do not wait here — Cancel must return to the UI immediately.
 
     def new_project(self) -> None:
         self.container.project_manager.new_project()
@@ -147,7 +149,7 @@ class AppController:
             parent,
             "Import Dataset",
             str(Path.home()),
-            "Data Files (*.csv *.xlsx *.xls *.json *.parquet *.feather *.arrow *.orc *.db *.sqlite)",
+            "Data Files (*.csv *.xlsx *.xls *.json *.jsonl *.parquet *.feather *.arrow *.orc *.db *.sqlite)",
         )
         return Path(path) if path else None
 
@@ -265,7 +267,10 @@ class AppController:
             from ml_studio.core.inference.predictor import Predictor
 
             self.predictor = Predictor(self.registry.load_pipeline(mv.model_id))
-            pages["predict"].bind_predictor(self.predictor, result.feature_columns, result.task)
+            bind_cols = (
+                getattr(result, "input_feature_columns", None) or result.feature_columns
+            )
+            pages["predict"].bind_predictor(self.predictor, bind_cols, result.task)
         except Exception as exc:
             logger.warning("Could not load predictor: %s", exc)
 

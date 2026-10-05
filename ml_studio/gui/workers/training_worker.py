@@ -1,10 +1,10 @@
-"""Training worker — prepares data then trains off the UI thread."""
+"""Training worker — selects columns then trains off the UI thread."""
 
 from __future__ import annotations
 
 import pandas as pd
 
-from ml_studio.core.training.data_prep import prepare_for_training
+from ml_studio.core.training.data_prep import select_training_frame
 from ml_studio.core.training.trainer import Trainer, TrainingConfig
 from ml_studio.gui.workers.base_worker import WorkerBase
 
@@ -34,10 +34,11 @@ class TrainingWorker(WorkerBase):
         df = self.df
         config = self.config
         if self.prepare_data:
-            progress(5, "Preparing training data…")
+            progress(5, "Selecting training columns…")
             if self.is_cancelled:
                 raise RuntimeError("Training cancelled")
-            prepared_df, target, features, _ = prepare_for_training(
+            # Column selection only — encoding fits inside Trainer on train split
+            prepared_df, target, features = select_training_frame(
                 df,
                 config.task,
                 target_column=config.target_column,

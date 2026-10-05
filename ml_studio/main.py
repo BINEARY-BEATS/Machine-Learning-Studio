@@ -8,6 +8,10 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 
 
 def main() -> int:
+    from ml_studio.app.runtime_quiet import silence_ml_console_noise
+
+    silence_ml_console_noise()
+
     from ml_studio.app.config import enable_pandas_copy_on_write, validate_startup_dependencies
     from ml_studio.app.container import create_container
     from ml_studio.app.logger import setup_logging

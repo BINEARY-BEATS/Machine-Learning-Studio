@@ -7,15 +7,20 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -23,7 +28,7 @@ from PyQt6.QtWidgets import (
 from ml_studio.core.training.registry import MODEL_REGISTRY, get_models_for_task
 from ml_studio.core.training.task import TaskType
 from ml_studio.core.training.trainer import TrainingConfig
-from ml_studio.gui.layout_utils import constrain_primary_button
+from ml_studio.gui.layout_utils import constrain_primary_button, configure_table_header
 from ml_studio.gui.pages.base_page import BasePage
 from ml_studio.gui.widgets.card import Card
 from ml_studio.gui.widgets.stepper import Stepper
@@ -32,15 +37,13 @@ from ml_studio.gui.widgets.stepper import Stepper
 class TrainPage(BasePage):
     STEPS = [
         "Task",
-        "Dataset",
-        "Features",
-        "Preprocess",
-        "Split",
-        "Models",
+        "Data",
+        "Model",
         "Tune",
-        "Train",
+        "Run",
     ]
     train_requested = pyqtSignal()
+    automl_requested = pyqtSignal()
 
     def __init__(self, container, parent=None):
         self._columns: list[str] = []
@@ -94,7 +97,7 @@ class TrainPage(BasePage):
         )
         self._prepare_label = QLabel(
             "Optional: build a preprocessing pipeline on the Prepare page. "
-            "Enabled steps will run before training."
+            "Enabled steps will run before training (fit on train split only)."
         )
         self._prepare_label.setWordWrap(True)
         self._test_spin = QDoubleSpinBox()
@@ -114,7 +117,6 @@ class TrainPage(BasePage):
         self._tune_hint.setObjectName("TextMuted")
         self._tune_hint.setWordWrap(True)
 
-        self._summary_form = QFormLayout()
         self._sum_task = QLabel("—")
         self._sum_dataset = QLabel("—")
         self._sum_target = QLabel("—")
@@ -122,27 +124,66 @@ class TrainPage(BasePage):
         self._sum_model = QLabel("—")
         self._sum_tune = QLabel("—")
         self._sum_split = QLabel("—")
+        self._sum_prep = QLabel("—")
+        self._summary_form = QFormLayout()
+        self._summary_form.setContentsMargins(0, 0, 0, 0)
+        self._summary_form.setHorizontalSpacing(20)
+        self._summary_form.setVerticalSpacing(10)
+        self._summary_form.setLabelAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self._summary_form.setFormAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
+        self._summary_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
+        )
+        self._summary_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
         for label, widget in (
             ("Task", self._sum_task),
             ("Dataset", self._sum_dataset),
             ("Target", self._sum_target),
             ("Features", self._sum_features),
+            ("Prepare", self._sum_prep),
             ("Model", self._sum_model),
             ("Tuning", self._sum_tune),
             ("Split / CV", self._sum_split),
         ):
-            self._summary_form.addRow(f"{label}:", widget)
+            widget.setWordWrap(False)
+            widget.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            widget.setMinimumHeight(0)
+            widget.setMaximumHeight(16777215)
+            widget.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+            )
+            key = QLabel(label)
+            key.setObjectName("TextMuted")
+            self._summary_form.addRow(key, widget)
+
+        self._automl_table = QTableWidget()
+        self._automl_table.setColumnCount(5)
+        self._automl_table.setHorizontalHeaderLabels(
+            ["Rank", "Model", "CV score", "Validation", "Time"]
+        )
+        configure_table_header(
+            self._automl_table.horizontalHeader(),
+            contents_cols=(0, 2, 3, 4),
+            stretch_cols=(1,),
+        )
+        self._automl_table.setAlternatingRowColors(True)
+        self._automl_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._automl_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._automl_table.verticalHeader().setVisible(False)
+        self._automl_table.setMinimumHeight(160)
+        self._automl_table.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self._automl_table.setRowCount(0)
 
         panels = [
             self._form_panel("Task type", [("Task", self._task_combo)]),
-            self._wrap(self._dataset_label),
-            self._form_panel("Target & features", [("Target", self._target_combo)]),
-            self._wrap(self._prepare_label),
-            self._form_panel(
-                "Split & CV",
-                [("Test size", self._test_spin), ("CV folds", self._cv_spin)],
-            ),
-            self._form_panel("Model", [("Algorithm", self._model_combo)]),
+            self._data_panel(),
+            self._model_panel(),
             self._tune_panel(),
             self._train_panel(),
         ]
@@ -156,6 +197,32 @@ class TrainPage(BasePage):
         self._feature_list.itemChanged.connect(self._refresh_summary)
         self._update_models()
         self._on_model_or_tune_changed()
+
+    def _data_panel(self) -> QWidget:
+        box = QWidget()
+        layout = QVBoxLayout(box)
+        layout.addWidget(self._dataset_label)
+        card = Card("Target & features")
+        form = QFormLayout()
+        form.addRow("Target:", self._target_combo)
+        card.add_layout(form)
+        card.add_widget(self._feature_list, stretch=1)
+        layout.addWidget(card, 1)
+        layout.addWidget(self._prepare_label)
+        return box
+
+    def _model_panel(self) -> QWidget:
+        box = QWidget()
+        layout = QVBoxLayout(box)
+        card = Card("Model & split")
+        form = QFormLayout()
+        form.addRow("Algorithm:", self._model_combo)
+        form.addRow("Test size:", self._test_spin)
+        form.addRow("CV folds:", self._cv_spin)
+        card.add_layout(form)
+        layout.addWidget(card)
+        layout.addStretch(1)
+        return box
 
     def _tune_panel(self) -> QWidget:
         card = Card("Hyperparameter tuning")
@@ -179,10 +246,7 @@ class TrainPage(BasePage):
         box = QWidget()
         layout = QVBoxLayout(box)
         layout.addWidget(card)
-        if title == "Target & features":
-            layout.addWidget(self._feature_list, 1)
-        else:
-            layout.addStretch(1)
+        layout.addStretch(1)
         return box
 
     def _wrap(self, widget: QWidget) -> QWidget:
@@ -193,15 +257,84 @@ class TrainPage(BasePage):
         return box
 
     def _train_panel(self) -> QWidget:
-        card = Card("Training summary")
-        card.add_layout(self._summary_form)
+        summary = Card("Training summary")
+        summary.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        summary.add_layout(self._summary_form)
         hint = QLabel("Click Start Training in the wizard bar above to begin.")
         hint.setObjectName("TextMuted")
-        card.add_widget(hint)
-        box = QWidget()
-        layout = QVBoxLayout(box)
-        layout.addWidget(card, 1)
-        return box
+        hint.setWordWrap(True)
+        summary.add_widget(hint)
+
+        automl = Card("AutoML")
+        automl_btn = QPushButton("Run AutoML leaderboard")
+        automl_btn.setObjectName("GhostButton")
+        automl_btn.setToolTip(
+            "Runs in the background (UI stays responsive). "
+            "Compares models with CV, then selects the best for Start Training."
+        )
+        automl_btn.clicked.connect(self.automl_requested.emit)
+        self._automl_btn = automl_btn
+        automl.add_widget(automl_btn)
+        self._automl_status = QLabel(
+            "Run AutoML to compare models. Best model is selected automatically."
+        )
+        self._automl_status.setObjectName("TextMuted")
+        self._automl_status.setWordWrap(True)
+        automl.add_widget(self._automl_status)
+        automl.add_widget(self._automl_table, stretch=1)
+
+        inner = QWidget()
+        layout = QVBoxLayout(inner)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        layout.addWidget(summary)
+        layout.addWidget(automl, 1)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        scroll.setWidget(inner)
+        return scroll
+
+    def set_automl_busy(self, busy: bool, message: str = "") -> None:
+        self._automl_btn.setEnabled(not busy)
+        self._automl_btn.setText("Running AutoML…" if busy else "Run AutoML leaderboard")
+        if busy:
+            self._automl_status.setText(message or "Comparing models…")
+            self._automl_table.setRowCount(0)
+        elif message:
+            self._automl_status.setText(message)
+
+    def show_automl_leaderboard(self, entries: list) -> None:
+        self._automl_table.setRowCount(0)
+        if not entries:
+            self._automl_status.setText("No models completed successfully.")
+            return
+        best = entries[0]
+        self._automl_status.setText(
+            f"Best: {best.model_name}  ·  CV {best.cv_score:.4f}  ·  ready to Start Training"
+        )
+        self._automl_table.setRowCount(len(entries))
+        for i, e in enumerate(entries):
+            val = f"{e.validation_score:.4f}" if e.validation_score is not None else "—"
+            cells = [
+                f"#{e.rank}",
+                e.model_name,
+                f"{e.cv_score:.4f}",
+                val,
+                f"{e.training_time:.1f}s",
+            ]
+            for col, text in enumerate(cells):
+                item = QTableWidgetItem(text)
+                if col != 1:
+                    item.setTextAlignment(
+                        int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+                    )
+                self._automl_table.setItem(i, col, item)
+        self._automl_table.selectRow(0)
 
     def on_show(self) -> None:
         self._refresh_prepare_label()
@@ -301,7 +434,7 @@ class TrainPage(BasePage):
             return None
         if index >= 1 and not self._columns:
             return "Import a dataset on the Data page first."
-        if index >= 2:
+        if index >= 1:
             target = self._target_combo.currentText()
             features = [
                 self._feature_list.item(i).text()
@@ -313,19 +446,22 @@ class TrainPage(BasePage):
                 TaskType.CLUSTERING.value,
                 TaskType.ANOMALY_DETECTION.value,
             )
-            if not unsupervised and (not target or not features):
-                return "Select a target column and at least one feature."
-            if unsupervised and not features:
-                return "Select at least one feature column."
-        if index >= 5 and not self._model_combo.currentText():
+            if index >= 1 and self._columns:
+                if not unsupervised and (not target or not features):
+                    # Allow being on Data step while still selecting
+                    if index >= 2:
+                        return "Select a target column and at least one feature."
+                if unsupervised and not features and index >= 2:
+                    return "Select at least one feature column."
+        if index >= 2 and not self._model_combo.currentText():
             return "Select a model algorithm."
-        if index >= 6 and self._tune_combo.currentText() == "Optuna":
+        if index >= 3 and self._tune_combo.currentText() == "Optuna":
             try:
                 import optuna  # noqa: F401
             except ImportError:
                 return "Optuna is not installed. Choose None/Grid, or: pip install optuna"
-        if index >= 7 and self.build_config() is None:
-            return "Finish Target, Features, and Model before training."
+        if index >= 4 and self.build_config() is None:
+            return "Finish Task, Data, and Model before training."
         return None
 
     def _update_models(self) -> None:
@@ -360,8 +496,24 @@ class TrainPage(BasePage):
             self._tune_hint.setText(f"Grid search over: {', '.join(space.keys())}.")
         self._refresh_summary()
 
+    def _summary_prepare_text(self) -> str:
+        """Short prepare line for the summary grid (not the long Data-step hint)."""
+        win = self.window()
+        pages = getattr(win, "_pages", None) or {}
+        prepare = pages.get("prepare")
+        if prepare is None:
+            return "—"
+        pipe = getattr(prepare, "pipeline", None)
+        steps = getattr(pipe, "steps", None) or []
+        if not steps:
+            return "None"
+        active = sum(1 for s in steps if getattr(s, "enabled", True))
+        return f"{active} of {len(steps)} steps"
+
     def _refresh_summary(self) -> None:
         config = self.build_config()
+        self._refresh_prepare_label()
+        prep_txt = self._summary_prepare_text()
         if not config:
             self._sum_task.setText("—")
             self._sum_dataset.setText(self._dataset_name)
@@ -370,6 +522,7 @@ class TrainPage(BasePage):
             self._sum_model.setText("—")
             self._sum_tune.setText("—")
             self._sum_split.setText("—")
+            self._sum_prep.setText(prep_txt)
             return
         tune_txt = {
             "none": "None",
@@ -382,6 +535,7 @@ class TrainPage(BasePage):
         self._sum_features.setText(str(len(config.feature_columns)))
         self._sum_model.setText(self._model_combo.currentText())
         self._sum_tune.setText(tune_txt)
+        self._sum_prep.setText(prep_txt)
         self._sum_split.setText(
             f"{config.test_size:.0%} test · {config.cv_splits}-fold CV"
         )
@@ -396,7 +550,7 @@ class TrainPage(BasePage):
         self._goto_step(index)
 
     def _goto_step(self, index: int) -> None:
-        if index == 3:
+        if index in (1, 4):
             self._refresh_prepare_label()
         self._stack.setCurrentIndex(index)
         self._stepper.set_current(index)

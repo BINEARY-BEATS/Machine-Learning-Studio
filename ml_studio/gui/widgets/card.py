@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLayout, QSizePolicy, QVBoxLayout, QWidget
 
 from ml_studio.app.theme_tokens import SPACE
 
@@ -13,6 +13,8 @@ class Card(QFrame):
     def __init__(self, title: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("Card")
+        # Prefer natural height — never squash children below their size hint.
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(SPACE[4], SPACE[4], SPACE[4], SPACE[4])
         outer.setSpacing(SPACE[2])
@@ -27,7 +29,7 @@ class Card(QFrame):
     def add_widget(self, widget: QWidget, stretch: int = 0) -> None:
         self._body.addWidget(widget, stretch)
 
-    def add_layout(self, layout: QHBoxLayout | QVBoxLayout, stretch: int = 0) -> None:
+    def add_layout(self, layout: QLayout, stretch: int = 0) -> None:
         self._body.addLayout(layout, stretch)
 
     def add_stretch(self) -> None:

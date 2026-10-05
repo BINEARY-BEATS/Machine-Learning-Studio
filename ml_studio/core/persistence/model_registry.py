@@ -49,8 +49,21 @@ class ModelRegistry:
             feature_columns=result.feature_columns,
             target_column=result.target_column,
             task=result.task,
+            encoding=getattr(result, "encoding", None),
+            input_feature_columns=getattr(result, "input_feature_columns", None)
+            or list(result.feature_columns),
         )
         pipeline.save(artifact_dir)
+
+        pipeline_hash = ""
+        if result.preprocessing is not None and hasattr(result.preprocessing, "hash"):
+            try:
+                pipeline_hash = str(result.preprocessing.hash())
+            except Exception:
+                pipeline_hash = ""
+        if result.encoding is not None:
+            enc_keys = sorted(result.encoding.feature_encoders.keys())
+            pipeline_hash = f"{pipeline_hash}|enc:{','.join(enc_keys)}"
 
         version = ModelVersion(
             model_id=result.experiment_id,
@@ -64,6 +77,7 @@ class ModelRegistry:
             tags=tags or [],
             notes=notes,
             artifact_dir=str(artifact_dir),
+            pipeline_hash=pipeline_hash,
         )
         self._models[version.model_id] = version
         self._save_index()

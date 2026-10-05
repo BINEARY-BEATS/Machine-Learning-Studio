@@ -44,6 +44,8 @@ class ExperimentRun:
     test_rows: int
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     registry_id: str = ""
+    y_true: object | None = None
+    y_pred: object | None = None
 
 
 class EvaluatePage(BasePage):
@@ -113,6 +115,10 @@ class EvaluatePage(BasePage):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
         right.add_widget(self._metrics_table, stretch=1)
+        self._plot_host = QWidget()
+        self._plot_layout = QVBoxLayout(self._plot_host)
+        self._plot_layout.setContentsMargins(0, 0, 0, 0)
+        right.add_widget(self._plot_host, stretch=1)
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
@@ -160,11 +166,42 @@ class EvaluatePage(BasePage):
             train_rows=result.train_size,
             test_rows=result.test_size,
             registry_id=registry_id,
+            y_true=getattr(result, "y_true_holdout", None),
+            y_pred=getattr(result, "y_pred_holdout", None),
         )
         self._runs.insert(0, run)
+        self._persist_runs()
         self._refresh_leaderboard()
         self._leaderboard.selectRow(0)
         self._show_run_detail(run)
+
+    def _persist_runs(self) -> None:
+        """Best-effort durable experiment store via project manager."""
+        try:
+            from ml_studio.core.persistence.experiments import ExperimentStore
+
+            pm = self.container.project_manager
+            if not pm or not pm.current or not pm.current.path:
+                return
+            store = ExperimentStore(pm.current.path)
+            store.save_runs(self._runs)
+        except Exception:
+            pass
+
+    def load_persisted_runs(self) -> None:
+        try:
+            from ml_studio.core.persistence.experiments import ExperimentStore
+
+            pm = self.container.project_manager
+            if not pm or not pm.current or not pm.current.path:
+                return
+            store = ExperimentStore(pm.current.path)
+            loaded = store.load_runs()
+            if loaded:
+                self._runs = loaded
+                self._refresh_leaderboard()
+        except Exception:
+            pass
 
     def _primary_score(self, task: str, metrics: dict):
         if task == "REGRESSION":
@@ -239,6 +276,29 @@ class EvaluatePage(BasePage):
                 color = metric_color(self._mode, key, raw, run.task)
                 item.setForeground(__import__("PyQt6.QtGui", fromlist=["QColor"]).QColor(color))
             self._metrics_table.setItem(i, 1, item)
+
+        self._update_plots(run)
+
+    def _update_plots(self, run: ExperimentRun) -> None:
+        while self._plot_layout.count():
+            item = self._plot_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        try:
+            from ml_studio.gui.charts import confusion_matrix_widget, residual_parity_widget
+
+            cm = run.metrics.get("confusion_matrix")
+            if cm is not None:
+                self._plot_layout.addWidget(confusion_matrix_widget(cm))
+            elif (
+                run.task in ("REGRESSION", "TIME_SERIES")
+                and run.y_true is not None
+                and run.y_pred is not None
+            ):
+                self._plot_layout.addWidget(residual_parity_widget(run.y_true, run.y_pred))
+        except Exception as exc:
+            self._plot_layout.addWidget(QLabel(f"Plot unavailable: {exc}"))
 
     def on_show(self) -> None:
         self._refresh_leaderboard()

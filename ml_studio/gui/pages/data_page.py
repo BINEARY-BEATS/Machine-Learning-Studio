@@ -83,10 +83,18 @@ class DataPage(BasePage):
 
         self._profile_table = self._make_profile_table()
         self._issues_table = self._make_issues_table()
+        self._plots_host = QWidget()
+        self._plots_layout = QVBoxLayout(self._plots_host)
+        self._plots_layout.setContentsMargins(0, 0, 0, 0)
+        self._plots_placeholder = QLabel("Profile a dataset to see distributions and correlations.")
+        self._plots_placeholder.setObjectName("Breadcrumb")
+        self._plots_placeholder.setWordWrap(True)
+        self._plots_layout.addWidget(self._plots_placeholder)
         self._tabs = PillTabs(
             [
                 ("Table", "table", self._wrap(table_card)),
                 ("Profiling", "chart", self._wrap(self._profile_table)),
+                ("Plots", "chart", self._wrap(self._plots_host)),
                 ("Quality Issues", "missing", self._wrap(self._issues_table)),
             ]
         )
@@ -182,6 +190,36 @@ class DataPage(BasePage):
     def _clear_profile_tables(self) -> None:
         self._profile_table.setRowCount(0)
         self._issues_table.setRowCount(0)
+        self._refresh_plots()
+
+    def _refresh_plots(self) -> None:
+        while self._plots_layout.count():
+            item = self._plots_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        if self._dataset is None:
+            ph = QLabel("Import a dataset to see plots.")
+            ph.setObjectName("Breadcrumb")
+            self._plots_layout.addWidget(ph)
+            return
+        try:
+            from ml_studio.gui.charts import (
+                chart_panel,
+                correlation_heatmap,
+                histogram_widget,
+                missingness_widget,
+            )
+
+            df = self._dataset.dataframe
+            num_cols = list(df.select_dtypes(include="number").columns)
+            widgets = [missingness_widget(df)]
+            if num_cols:
+                widgets.append(histogram_widget(df[num_cols[0]], title=f"Histogram · {num_cols[0]}"))
+            widgets.append(correlation_heatmap(df))
+            self._plots_layout.addWidget(chart_panel(*widgets), 1)
+        except Exception as exc:
+            self._plots_layout.addWidget(QLabel(f"Plots unavailable: {exc}"))
 
     def apply_profile_result(self, result) -> None:
         """Apply async profiling worker output to the Profiling / Quality tabs."""
@@ -233,6 +271,7 @@ class DataPage(BasePage):
             fix_btn.setObjectName("GhostButton")
             fix_btn.clicked.connect(self._goto_prepare)
             self._issues_table.setCellWidget(i, 4, fix_btn)
+        self._refresh_plots()
 
     def _goto_prepare(self) -> None:
         win = self.window()

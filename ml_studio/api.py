@@ -121,7 +121,9 @@ class Project:
             "task": self.task,
             "target": self.target,
             "schema_columns": self.schema_columns,
-            "environment": env
+            "environment": env,
+            "last_model_id": getattr(self, "_last_model_id", None),
+            "last_registry_dir": getattr(self, "_last_registry_dir", None),
         }
         
         with open(path / "project.json", "w") as f:
@@ -148,6 +150,8 @@ class Project:
         proj.task = manifest["task"]
         proj.schema_columns = manifest.get("schema_columns", {})
         proj.dataset = joblib.load(path / "dataset.joblib")
+        proj._last_model_id = manifest.get("last_model_id")
+        proj._last_registry_dir = manifest.get("last_registry_dir")
         
         if (path / "pipeline.json").exists():
             from ml_studio.core.pipeline import Pipeline
@@ -204,6 +208,119 @@ class Project:
             "Build a pipeline in the GUI Prepare page or use recipes via CLI pipeline create --recipe."
         )
 
+    def train(
+        self,
+        model_id: str = "logistic_regression",
+        test_size: float = 0.2,
+        cv_splits: int = 5,
+        tune_method: str = "none",
+        registry_dir: str | None = None,
+    ) -> Any:
+        """Train using the same leakage-safe Trainer path as the GUI."""
+        if not self.dataset or not self.dataset.target_column:
+            raise ValueError("Dataset and target must be set")
+        from ml_studio.core.persistence.model_registry import ModelRegistry
+        from ml_studio.core.training.task import TaskType
+        from ml_studio.core.training.trainer import Trainer, TrainingConfig
+
+        task_map = {
+            "classification": TaskType.CLASSIFICATION,
+            "regression": TaskType.REGRESSION,
+            "clustering": TaskType.CLUSTERING,
+            "anomaly": TaskType.ANOMALY_DETECTION,
+            "time_series": TaskType.TIME_SERIES,
+        }
+        task = task_map.get((self.task or "classification").lower(), TaskType.CLASSIFICATION)
+        features = [
+            c
+            for c, info in self.schema_columns.items()
+            if info.get("role") == "feature" and c in self.dataset.dataframe.columns
+        ]
+        if not features:
+            features = [c for c in self.dataset.dataframe.columns if c != self.dataset.target_column]
+        config = TrainingConfig(
+            task=task,
+            model_id=model_id,
+            target_column=self.dataset.target_column,
+            feature_columns=features,
+            test_size=test_size,
+            cv_splits=cv_splits,
+            tune_method=tune_method,
+        )
+        result = Trainer().train(self.dataset.dataframe, config, preprocessing=self.pipeline)
+        out_dir = Path(registry_dir or (Path(self.name) / "models"))
+        registry = ModelRegistry(out_dir)
+        mv = registry.register(result, name=model_id)
+        self._last_model_id = mv.model_id
+        self._last_registry_dir = str(out_dir)
+        self.save()
+        return result
+
+    def evaluate(self) -> dict[str, Any]:
+        """Return metrics from the last train() call (re-load registry entry)."""
+        model_id = getattr(self, "_last_model_id", None)
+        reg_dir = getattr(self, "_last_registry_dir", None)
+        if not model_id or not reg_dir:
+            raise ValueError("Call train() first")
+        from ml_studio.core.persistence.model_registry import ModelRegistry
+
+        mv = ModelRegistry(Path(reg_dir)).get(model_id)
+        if mv is None:
+            raise KeyError(model_id)
+        return dict(mv.metrics)
+
+    def predict(self, source: str, output: str | None = None) -> Path:
+        """Batch-predict using the last registered model."""
+        model_id = getattr(self, "_last_model_id", None)
+        reg_dir = getattr(self, "_last_registry_dir", None)
+        if not model_id or not reg_dir:
+            raise ValueError("Call train() first")
+        from ml_studio.core.inference.predictor import Predictor
+        from ml_studio.core.persistence.model_registry import ModelRegistry
+
+        pipe = ModelRegistry(Path(reg_dir)).load_pipeline(model_id)
+        predictor = Predictor(pipe)
+        out = Path(output) if output else Path(source).with_name(f"{Path(source).stem}_predictions.csv")
+        return predictor.predict_batch(Path(source), out)
+
+    def automl(self, max_models: int = 5) -> Any:
+        """Run AutoML leaderboard then train the best model_id."""
+        if not self.dataset or not self.dataset.target_column:
+            raise ValueError("Dataset and target must be set")
+        from sklearn.model_selection import train_test_split
+
+        from ml_studio.core.training.automl import AutoMLRunner
+        from ml_studio.core.training.data_prep import EncodingBundle
+        from ml_studio.core.training.task import TaskType
+
+        task_map = {
+            "classification": TaskType.CLASSIFICATION,
+            "regression": TaskType.REGRESSION,
+        }
+        task = task_map.get((self.task or "classification").lower(), TaskType.CLASSIFICATION)
+        features = [
+            c
+            for c, info in self.schema_columns.items()
+            if info.get("role") == "feature" and c in self.dataset.dataframe.columns
+        ]
+        if not features:
+            features = [c for c in self.dataset.dataframe.columns if c != self.dataset.target_column]
+        df = self.dataset.dataframe
+        X = df[features]
+        y = df[self.dataset.target_column]
+        X_tr, X_va, y_tr, y_va = train_test_split(X, y, test_size=0.2, random_state=42)
+        enc = EncodingBundle().fit(X_tr, y_tr, task, self.dataset.target_column)
+        runner = AutoMLRunner(task, max_models=max_models)
+        board = runner.run(
+            enc.transform_features(X_tr),
+            enc.transform_target(y_tr),
+            enc.transform_features(X_va),
+            enc.transform_target(y_va),
+        )
+        if board.best_model_id:
+            return self.train(model_id=board.best_model_id)
+        raise RuntimeError("AutoML produced no successful models")
+
     def profile(self) -> dict[str, Any]:
         """Run engineering-grade data profiling and return structured JSON."""
         if not self.dataset:
@@ -218,5 +335,5 @@ class Project:
             raise ValueError("Dataset and target column must be set before sweeping")
         raise NotImplementedError(
             "api.Project.sweep() is not implemented. "
-            "Use the GUI Train wizard with Optuna/Grid, or call OptunaTuner from Python."
+            "Use train(tune_method='optuna') or automl() instead."
         )

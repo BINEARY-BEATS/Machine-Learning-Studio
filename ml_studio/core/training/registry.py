@@ -46,21 +46,27 @@ class ModelMetadata:
 
 def _optional_xgb_classifier(**kw):
     import xgboost as xgb
+    kw.setdefault("verbosity", 0)
     return xgb.XGBClassifier(**kw)
 
 
 def _optional_xgb_regressor(**kw):
     import xgboost as xgb
+    kw.setdefault("verbosity", 0)
     return xgb.XGBRegressor(**kw)
 
 
 def _optional_lgbm_classifier(**kw):
     import lightgbm as lgb
+    kw.setdefault("verbosity", -1)
+    kw.setdefault("force_col_wise", True)
     return lgb.LGBMClassifier(**kw)
 
 
 def _optional_lgbm_regressor(**kw):
     import lightgbm as lgb
+    kw.setdefault("verbosity", -1)
+    kw.setdefault("force_col_wise", True)
     return lgb.LGBMRegressor(**kw)
 
 
@@ -79,7 +85,7 @@ MODEL_REGISTRY: dict[str, ModelMetadata] = {
     "random_forest_classifier": ModelMetadata(
         name="Random Forest",
         task_types=[TaskType.CLASSIFICATION],
-        factory=lambda **kw: RandomForestClassifier(random_state=42, n_jobs=-1, **kw),
+        factory=lambda **kw: RandomForestClassifier(random_state=42, n_jobs=2, **kw),
         default_params={"n_estimators": 100},
         hyperparameters={"n_estimators": [50, 100, 200], "max_depth": [None, 5, 10]},
         pros=["Robust", "Feature importance"],
@@ -89,7 +95,7 @@ MODEL_REGISTRY: dict[str, ModelMetadata] = {
     "extra_trees_classifier": ModelMetadata(
         name="Extra Trees",
         task_types=[TaskType.CLASSIFICATION],
-        factory=lambda **kw: ExtraTreesClassifier(random_state=42, n_jobs=-1, **kw),
+        factory=lambda **kw: ExtraTreesClassifier(random_state=42, n_jobs=2, **kw),
         default_params={"n_estimators": 100},
         cost="medium",
     ),
@@ -146,14 +152,14 @@ MODEL_REGISTRY: dict[str, ModelMetadata] = {
     "random_forest_regressor": ModelMetadata(
         name="Random Forest Regressor",
         task_types=[TaskType.REGRESSION],
-        factory=lambda **kw: RandomForestRegressor(random_state=42, n_jobs=-1, **kw),
+        factory=lambda **kw: RandomForestRegressor(random_state=42, n_jobs=2, **kw),
         default_params={"n_estimators": 100},
         cost="medium",
     ),
     "extra_trees_regressor": ModelMetadata(
         name="Extra Trees Regressor",
         task_types=[TaskType.REGRESSION],
-        factory=lambda **kw: ExtraTreesRegressor(random_state=42, n_jobs=-1, **kw),
+        factory=lambda **kw: ExtraTreesRegressor(random_state=42, n_jobs=2, **kw),
         cost="medium",
     ),
     "hist_gb_regressor": ModelMetadata(

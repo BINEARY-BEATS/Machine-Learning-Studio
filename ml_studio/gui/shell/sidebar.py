@@ -56,6 +56,12 @@ class Sidebar(QFrame):
         header.addWidget(self._collapse_btn)
         outer.addLayout(header)
 
+        self._run_chip = QLabel("IDLE")
+        self._run_chip.setObjectName("RunStateChip")
+        self._run_chip.setProperty("runState", "idle")
+        self._run_chip.setToolTip("Lab run state")
+        outer.addWidget(self._run_chip)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -104,6 +110,24 @@ class Sidebar(QFrame):
         self.set_active(key)
         self.navigate.emit(key)
 
+    def set_run_state(self, state: str) -> None:
+        """Update lab run chip: idle | profiling | training | failed | ready."""
+        label = {
+            "idle": "IDLE",
+            "profiling": "PROFILING",
+            "training": "TRAINING",
+            "failed": "FAILED",
+            "ready": "READY",
+        }.get(state, state.upper())
+        self._run_chip.setText(label)
+        self._run_chip.setProperty("runState", state)
+        self._run_chip.style().unpolish(self._run_chip)
+        self._run_chip.style().polish(self._run_chip)
+        if self._collapsed:
+            self._run_chip.setVisible(False)
+        else:
+            self._run_chip.setVisible(True)
+
     def sizeHint(self):
         from PyQt6.QtCore import QSize
 
@@ -115,6 +139,7 @@ class Sidebar(QFrame):
         target = self.COLLAPSED_WIDTH if self._collapsed else self.EXPANDED_WIDTH
         self._collapse_btn.setText("»" if self._collapsed else "«")
         self._title.setVisible(not self._collapsed)
+        self._run_chip.setVisible(not self._collapsed)
         for label in self._section_labels:
             label.setVisible(not self._collapsed)
         for item in NAV_ITEMS:
