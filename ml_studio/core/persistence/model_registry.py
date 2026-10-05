@@ -13,6 +13,30 @@ from ml_studio.core.training.trainer import TrainingResult
 logger = get_logger("model_registry")
 
 
+def _pipeline_from_result(result: TrainingResult) -> InferencePipeline:
+    return InferencePipeline(
+        estimator=result.estimator,
+        preprocessing=result.preprocessing,
+        feature_columns=result.feature_columns,
+        target_column=result.target_column,
+        task=result.task,
+        feature_schema=getattr(result, "feature_schema", None) or {},
+        target_classes=getattr(result, "target_classes", None),
+        encoding=getattr(result, "encoding", None),
+        input_feature_columns=getattr(result, "input_feature_columns", None)
+        or list(result.feature_columns),
+    )
+
+
+def _pipeline_hash(result: TrainingResult) -> str:
+    if result.preprocessing is None or not hasattr(result.preprocessing, "hash"):
+        return ""
+    try:
+        return str(result.preprocessing.hash())
+    except Exception:
+        return ""
+
+
 class ModelRegistry:
     def __init__(self, base_dir: Path) -> None:
         self.base_dir = Path(base_dir)
@@ -43,41 +67,22 @@ class ModelRegistry:
         notes: str = "",
     ) -> ModelVersion:
         artifact_dir = self.base_dir / result.experiment_id
-        pipeline = InferencePipeline(
-            estimator=result.estimator,
-            preprocessing=result.preprocessing,
-            feature_columns=result.feature_columns,
-            target_column=result.target_column,
-            task=result.task,
-            encoding=getattr(result, "encoding", None),
-            input_feature_columns=getattr(result, "input_feature_columns", None)
-            or list(result.feature_columns),
-        )
-        pipeline.save(artifact_dir)
-
-        pipeline_hash = ""
-        if result.preprocessing is not None and hasattr(result.preprocessing, "hash"):
-            try:
-                pipeline_hash = str(result.preprocessing.hash())
-            except Exception:
-                pipeline_hash = ""
-        if result.encoding is not None:
-            enc_keys = sorted(result.encoding.feature_encoders.keys())
-            pipeline_hash = f"{pipeline_hash}|enc:{','.join(enc_keys)}"
-
+        _pipeline_from_result(result).save(artifact_dir)
         version = ModelVersion(
             model_id=result.experiment_id,
             name=name,
             task=result.task,
             dataset_id=dataset_id,
             dataset_version=dataset_version,
+            feature_schema=getattr(result, "feature_schema", None) or {},
+            target_classes=getattr(result, "target_classes", None),
             metrics=result.metrics,
             hyperparameters={"model_id": result.model_id},
             training_duration=result.training_duration,
             tags=tags or [],
             notes=notes,
             artifact_dir=str(artifact_dir),
-            pipeline_hash=pipeline_hash,
+            pipeline_hash=_pipeline_hash(result),
         )
         self._models[version.model_id] = version
         self._save_index()

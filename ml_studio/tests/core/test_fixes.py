@@ -23,15 +23,17 @@ def test_prepare_mixed_types():
         "age": rng.randint(20, 60, n).astype(float),
         "sex": rng.choice(["M", "F"], n),
         "fare": rng.uniform(5, 50, n),
-        "survived": rng.choice([0, 1], n),
+        "survived": rng.choice(["yes", "no"], n),
     })
     df.loc[0, "age"] = np.nan
-    prepared, target, features, _ = prepare_for_training(
+    prepared, target, features, meta = prepare_for_training(
         df, TaskType.CLASSIFICATION, target_column="survived"
     )
     assert len(prepared) >= 10
     assert target == "survived"
     assert features
+    assert not pd.api.types.is_numeric_dtype(prepared["sex"])
+    assert set(meta.get("target_classes") or []) == {"no", "yes"}
 
 
 def test_suggest_columns():

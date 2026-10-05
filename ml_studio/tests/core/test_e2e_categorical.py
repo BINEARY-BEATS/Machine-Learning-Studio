@@ -39,6 +39,7 @@ def test_categorical_e2e_train_predict_persist(tmp_path: Path):
         cv_splits=3,
     )
     result = Trainer().train(df, config)
+    assert result.target_classes is not None
     assert result.encoding is not None
     assert result.encoding.target_encoder is not None
     assert "accuracy" in result.metrics or "f1" in result.metrics

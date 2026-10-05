@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from ml_studio.core.training.data_prep import select_training_frame
+from ml_studio.core.training.data_prep import prepare_for_training
 from ml_studio.core.training.trainer import Trainer, TrainingConfig
 from ml_studio.gui.workers.base_worker import WorkerBase
 
@@ -24,6 +24,7 @@ class TrainingWorker(WorkerBase):
         self.preprocessing = preprocessing
         self.prepare_data = prepare_data
         self._trainer = Trainer()
+        self.prep_meta: dict = {}
 
     def do_work(self):
         def progress(pct, msg):
@@ -37,13 +38,13 @@ class TrainingWorker(WorkerBase):
             progress(5, "Selecting training columns…")
             if self.is_cancelled:
                 raise RuntimeError("Training cancelled")
-            # Column selection only — encoding fits inside Trainer on train split
-            prepared_df, target, features = select_training_frame(
+            prepared_df, target, features, meta = prepare_for_training(
                 df,
                 config.task,
                 target_column=config.target_column,
                 feature_columns=config.feature_columns or None,
             )
+            self.prep_meta = meta
             config.target_column = target
             config.feature_columns = features
             df = prepared_df

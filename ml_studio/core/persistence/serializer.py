@@ -13,6 +13,11 @@ import joblib
 import numpy as np
 import pandas as pd
 
+from ml_studio.core.inference.schema_coerce import (
+    build_feature_schema,
+    coerce_value,
+    decode_predictions,
+)
 from ml_studio.core.pipeline import Pipeline
 from ml_studio.core.training.data_prep import EncodingBundle
 from ml_studio.core.training.task import TaskType
@@ -20,7 +25,7 @@ from ml_studio.core.training.task import TaskType
 
 @dataclass
 class InferencePipeline:
-    """Complete inference artifact: preprocessing + encoders + estimator + schema."""
+    """Complete inference artifact: preprocessing + schema + estimator."""
 
     estimator: Any
     preprocessing: Pipeline | None
@@ -28,18 +33,17 @@ class InferencePipeline:
     target_column: str
     task: TaskType
     feature_schema: dict[str, Any] = field(default_factory=dict)
+    target_classes: list[str] | None = None
     encoding: EncodingBundle | None = None
     input_feature_columns: list[str] = field(default_factory=list)
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
-        """Apply fitted prep + feature encoders (never re-fit)."""
+        """Apply fitted prep (incl. AutoEncode). Never re-fit."""
         work = X.copy()
-        raw_cols = self.input_feature_columns or self.feature_columns
+        raw_cols = self.input_feature_columns or list(self.feature_schema.keys()) or self.feature_columns
         if self.preprocessing is not None:
-            present = [c for c in raw_cols if c in work.columns]
-            if present:
-                # Keep extra columns prep might need; prefer declared input order
-                ordered = [c for c in raw_cols if c in work.columns]
+            ordered = [c for c in raw_cols if c in work.columns]
+            if ordered:
                 work = work[ordered]
             work = self.preprocessing.transform(work)
         elif raw_cols:
@@ -57,18 +61,43 @@ class InferencePipeline:
         return work
 
     def predict(self, X: pd.DataFrame):
-        """Predict and inverse-transform classification labels when encoded."""
         Xt = self.transform(X)
         raw = self.estimator.predict(Xt)
-        if self.encoding is not None and self.encoding.target_encoder is not None:
-            return self.encoding.inverse_target(raw)
-        return raw
+        return self.decode(raw)
 
     def predict_proba(self, X: pd.DataFrame):
         Xt = self.transform(X)
         if not hasattr(self.estimator, "predict_proba"):
             raise AttributeError("Estimator has no predict_proba")
         return self.estimator.predict_proba(Xt)
+
+    def coerce_row(self, row: dict[str, Any]) -> pd.DataFrame:
+        """Cast a raw input dict using feature_schema. Raises ValueError({field: msg})."""
+        schema = self.feature_schema or {}
+        cols = list(schema.keys()) or (self.input_feature_columns or self.feature_columns)
+        errors: dict[str, str] = {}
+        out: dict[str, Any] = {}
+        for col in cols:
+            spec = schema.get(col, {})
+            kind = spec.get("kind", "categorical")
+            raw = row.get(col, None)
+            try:
+                out[col] = coerce_value(kind, col, raw)
+            except ValueError as exc:
+                payload = exc.args[0] if exc.args else {col: "invalid value"}
+                if isinstance(payload, dict):
+                    errors.update(payload)
+                else:
+                    errors[col] = str(payload)
+        if errors:
+            raise ValueError(errors)
+        return pd.DataFrame([out])
+
+    def decode(self, preds: Any) -> Any:
+        classes = self.target_classes
+        if not classes and self.encoding is not None:
+            return self.encoding.inverse_target(preds)
+        return decode_predictions(preds, classes)
 
     def save(self, directory: Path) -> Path:
         directory = Path(directory)
@@ -81,16 +110,14 @@ class InferencePipeline:
             "target_column": self.target_column,
             "task": self.task.value,
             "feature_schema": self.feature_schema,
+            "target_classes": self.target_classes,
             "has_encoding": self.encoding is not None,
             "has_target_encoder": bool(
                 self.encoding and self.encoding.target_encoder is not None
             ),
-            "encoded_features": list(self.encoding.feature_encoders.keys())
-            if self.encoding
-            else [],
         }
         with (directory / "metadata.json").open("w", encoding="utf-8") as f:
-            json.dump(meta, f, indent=2)
+            json.dump(meta, f, indent=2, default=str)
         return artifact_path
 
     @classmethod
@@ -107,6 +134,7 @@ class ModelVersion:
     dataset_id: str = ""
     dataset_version: int = 1
     feature_schema: dict[str, Any] = field(default_factory=dict)
+    target_classes: list[str] | None = None
     metrics: dict[str, Any] = field(default_factory=dict)
     hyperparameters: dict[str, Any] = field(default_factory=dict)
     training_timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -125,6 +153,7 @@ class ModelVersion:
             "dataset_id": self.dataset_id,
             "dataset_version": self.dataset_version,
             "feature_schema": self.feature_schema,
+            "target_classes": self.target_classes,
             "metrics": self.metrics,
             "hyperparameters": self.hyperparameters,
             "training_timestamp": self.training_timestamp.isoformat(),
@@ -145,6 +174,7 @@ class ModelVersion:
             dataset_id=data.get("dataset_id", ""),
             dataset_version=data.get("dataset_version", 1),
             feature_schema=data.get("feature_schema", {}),
+            target_classes=data.get("target_classes"),
             metrics=data.get("metrics", {}),
             hyperparameters=data.get("hyperparameters", {}),
             training_timestamp=datetime.fromisoformat(data["training_timestamp"])
@@ -156,3 +186,11 @@ class ModelVersion:
             artifact_dir=data.get("artifact_dir", ""),
             pipeline_hash=data.get("pipeline_hash", ""),
         )
+
+
+# Re-export for callers that built schema at train time
+__all__ = [
+    "InferencePipeline",
+    "ModelVersion",
+    "build_feature_schema",
+]

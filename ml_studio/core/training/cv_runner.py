@@ -9,9 +9,11 @@ import pandas as pd
 from sklearn.metrics import get_scorer
 from sklearn.model_selection import train_test_split
 
+from ml_studio.core.inference.schema_coerce import needs_auto_encode
 from ml_studio.core.pipeline import Pipeline
 from ml_studio.core.training.data_prep import EncodingBundle
 from ml_studio.core.training.task import TaskType
+from ml_studio.transforms.auto_encode import AutoEncode
 
 
 def split_data(
@@ -79,6 +81,32 @@ def apply_preprocessing(
     return X_t, y_aligned
 
 
+def append_auto_encode(
+    fitted: Pipeline | None,
+    X_train: pd.DataFrame,
+    y_train: pd.Series | None,
+    X_test: pd.DataFrame | None = None,
+    y_test: pd.Series | None = None,
+) -> tuple[Pipeline, pd.DataFrame, pd.Series | None, pd.DataFrame | None, pd.Series | None]:
+    """If non-numeric/NaN remain, fit AutoEncode on train and append to pipeline."""
+    pipe = fitted if fitted is not None else Pipeline(steps=[])
+    if not needs_auto_encode(X_train):
+        return fitted if fitted is not None else pipe, X_train, y_train, X_test, y_test
+    if pipe.steps and type(pipe.steps[-1]).__name__ == "AutoEncode":
+        ae = pipe.steps[-1]
+        X_tr = ae.transform(X_train)
+    else:
+        ae = AutoEncode()
+        X_tr = ae.fit_transform(X_train, y_train)
+        pipe.add(ae)
+    y_tr = y_train.loc[X_tr.index] if y_train is not None else None
+    X_te, y_te = X_test, y_test
+    if X_test is not None and len(X_test):
+        X_te = ae.transform(X_test)
+        y_te = y_test.loc[X_te.index] if y_test is not None else None
+    return pipe, X_tr, y_tr, X_te, y_te
+
+
 def _align_dropna(
     X: pd.DataFrame,
     y: pd.Series | None,
@@ -97,11 +125,11 @@ def _encode_fold(
     task: TaskType | None,
     target_column: str,
 ) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series]:
+    pipe, X_tr, y_tr, X_va, y_va = append_auto_encode(None, X_tr, y_tr, X_va, y_va)
+    del pipe  # fold-local AutoEncode only
     if task is None:
         return X_tr, y_tr, X_va, y_va
     enc = EncodingBundle().fit(X_tr, y_tr, task, target_column)
-    X_tr = enc.transform_features(X_tr)
-    X_va = enc.transform_features(X_va)
     y_tr = enc.transform_target(y_tr)
     y_va = enc.transform_target(y_va)
     X_tr, y_tr = _align_dropna(X_tr, y_tr)
@@ -120,7 +148,7 @@ def cross_val_score_leakfree(
     task: TaskType | None = None,
     target_column: str = "",
 ) -> np.ndarray:
-    """Per fold: clone prep → fit fold-train → transform fold-val → score."""
+    """Per fold: clone prep → fit fold-train → AutoEncode → transform fold-val → score."""
     scorer = get_scorer(scoring)
     scores: list[float] = []
     for tr_idx, va_idx in cv.split(X_train, y_train):

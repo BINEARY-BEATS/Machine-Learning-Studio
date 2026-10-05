@@ -37,14 +37,16 @@ def _auto_discover():
 
     # Build registry
     for cls in get_all_subclasses(BaseTransform):
-        # Skip abstract / unfinished transforms (not shown in GUI picker)
-        if cls.__name__ in ("BaseKFoldEncoder", "CustomPython"):
+        # Skip abstract / unfinished transforms
+        if cls.__name__ in ("BaseKFoldEncoder",):
             continue
         name = cls.__name__
         _REGISTRY[name] = cls
 
-        
-        # Determine category based on module name
+        # Hidden from GUI picker (still constructible via get / clone_unfitted)
+        if name in ("CustomPython", "AutoEncode"):
+            continue
+
         module_name = cls.__module__.split('.')[-1]
         if module_name not in _CATEGORIES:
             _CATEGORIES[module_name] = []

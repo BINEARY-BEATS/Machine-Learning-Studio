@@ -10,9 +10,11 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 
+from ml_studio.core.inference.schema_coerce import build_feature_schema
 from ml_studio.core.pipeline import Pipeline
 from ml_studio.core.training.cv import recommend_cv_strategy
 from ml_studio.core.training.cv_runner import (
+    append_auto_encode,
     apply_preprocessing,
     cross_val_score_leakfree,
     fit_preprocessing,
@@ -58,6 +60,8 @@ class TrainingResult:
     test_size: int
     encoding: EncodingBundle | None = None
     input_feature_columns: list[str] = field(default_factory=list)
+    target_classes: list[str] | None = None
+    feature_schema: dict[str, Any] = field(default_factory=dict)
     y_true_holdout: Any = None
     y_pred_holdout: Any = None
 
@@ -97,15 +101,23 @@ class Trainer:
 
     def _prepare_splits(self, X_raw, y_raw, config, preprocessing, cb):
         X_tr_r, X_te_r, y_tr_r, y_te_r = self._split(X_raw, y_raw, config, cb)
+        schema = build_feature_schema(X_tr_r) if len(X_tr_r) else {}
         fitted, X_tr, y_tr, X_te, y_te = self._prepare(
             preprocessing, X_tr_r, y_tr_r, X_te_r, y_te_r, cb
         )
-        encoding, X_tr, y_tr, X_te, y_te = self._encode(
+        fitted, X_tr, y_tr, X_te, y_te = append_auto_encode(
+            fitted, X_tr, y_tr, X_te if len(X_te) else None, y_te
+        )
+        if X_te is None:
+            X_te, y_te = pd.DataFrame(), y_te_r
+        encoding, X_tr, y_tr, X_te, y_te = self._encode_target(
             X_tr, y_tr, X_te, y_te, config, cb
         )
         return {
             "fitted_prep": fitted,
             "encoding": encoding,
+            "feature_schema": schema,
+            "target_classes": list(encoding.target_classes) if encoding.target_classes else None,
             "X_train_raw": X_tr_r,
             "y_train_raw": y_tr_r,
             "X_train": X_tr,
@@ -162,6 +174,8 @@ class Trainer:
             test_size=len(b["X_test"]) if len(b["X_test"]) else 0,
             encoding=b["encoding"],
             input_feature_columns=input_cols,
+            target_classes=b.get("target_classes"),
+            feature_schema=b.get("feature_schema") or {},
             y_true_holdout=y_eval,
             y_pred_holdout=preds if config.task not in _UNSUPERVISED else None,
         )
@@ -194,17 +208,10 @@ class Trainer:
             X_te, y_te = X_te_r, y_te_r
         return fitted, X_tr, y_tr, X_te, y_te
 
-    def _encode(self, X_train, y_train, X_test, y_test, config, cb):
-        self._emit(cb, 28, "Fitting feature/target encoders on train only…")
+    def _encode_target(self, X_train, y_train, X_test, y_test, config, cb):
+        self._emit(cb, 28, "Fitting target encoder on train only…")
         encoding = EncodingBundle()
         encoding.fit(X_train, y_train, config.task, config.target_column or "")
-        cols = list(X_train.columns)
-        X_train = encoding.transform_features(X_train)
-        if len(X_test):
-            for col in cols:
-                if col not in X_test.columns:
-                    X_test[col] = np.nan
-            X_test = encoding.transform_features(X_test[cols])
         y_train = encoding.transform_target(y_train) if y_train is not None else None
         y_test = encoding.transform_target(y_test) if y_test is not None else None
         X_train, y_train = _dropna_xy(X_train, y_train)

@@ -302,7 +302,11 @@ class PredictPage(BasePage):
     def show_prediction(self, result) -> None:
         text = f"Prediction: {result.prediction}"
         if getattr(result, "probabilities", None):
-            probs = ", ".join(f"{p:.3f}" for p in result.probabilities)
+            probs_obj = result.probabilities
+            if isinstance(probs_obj, dict):
+                probs = ", ".join(f"{k}={v:.3f}" for k, v in probs_obj.items())
+            else:
+                probs = ", ".join(f"{p:.3f}" for p in probs_obj)
             text += f"  (proba: {probs})"
         if getattr(result, "explanation", None):
             text += "\nLocal explanation available (see Explain details in result metadata)."

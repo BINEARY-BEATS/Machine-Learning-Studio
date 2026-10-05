@@ -37,8 +37,8 @@ def _categorical_df(n: int = 80, seed: int = 0) -> pd.DataFrame:
     )
 
 
-def test_prepare_for_training_does_not_encode():
-    """Selection helper must not LabelEncode (encoding is train-only in Trainer)."""
+def test_prepare_for_training_does_not_encode_features():
+    """Features stay raw; string target classes are recorded in meta."""
     df = _categorical_df(30)
     prepared, target, features, meta = prepare_for_training(
         df, TaskType.CLASSIFICATION, target_column="label"
@@ -47,6 +47,8 @@ def test_prepare_for_training_does_not_encode():
     assert "color" in features
     assert not pd.api.types.is_numeric_dtype(prepared["color"])
     assert meta.get("label_encoders") == {}
+    assert set(meta.get("target_classes") or []) == {"yes", "no", "maybe"}
+    assert not pd.api.types.is_numeric_dtype(prepared["label"])
 
 
 def test_no_prep_fit_on_full_before_split():
@@ -103,23 +105,24 @@ def test_categorical_round_trip_predict_and_decode(tmp_path: Path):
         cv_splits=3,
     )
     result = Trainer().train(df, config, preprocessing=None)
-    assert result.encoding is not None
-    assert result.encoding.target_encoder is not None
-    assert "color" in result.encoding.feature_encoders
+    assert result.target_classes is not None
+    assert set(result.target_classes) == {"yes", "no", "maybe"}
+    assert result.feature_schema
+    assert result.preprocessing is not None
+    assert any(type(s).__name__ == "AutoEncode" for s in result.preprocessing.steps)
 
     registry = ModelRegistry(tmp_path / "models")
     mv = registry.register(result, name="cat-clf")
     pipe = registry.load_pipeline(mv.model_id)
-    assert pipe.encoding is not None
-    assert pipe.encoding.target_encoder is not None
+    assert pipe.target_classes is not None
+    assert pipe.feature_schema
 
     predictor = Predictor(pipe)
-    # A clearly "red-ish" row should predict a known string label
     pred = predictor.predict_single({"color": "red", "size": "M", "x_num": 0.1})
     assert pred.prediction in ("yes", "no", "maybe")
     assert isinstance(pred.prediction, str)
+    assert isinstance(pred.probabilities, dict)
 
-    # Save/load identity
     out = tmp_path / "art"
     pipe.save(out)
     loaded = InferencePipeline.load(out)
@@ -127,14 +130,16 @@ def test_categorical_round_trip_predict_and_decode(tmp_path: Path):
     assert pred2.prediction == pred.prediction
 
 
-def test_encoding_bundle_fit_transform_inverse():
+def test_encoding_bundle_target_only():
     X = pd.DataFrame({"a": ["x", "y", "x"], "b": [1.0, 2.0, 3.0]})
     y = pd.Series(["cat", "dog", "cat"], name="t")
     enc = EncodingBundle().fit(X, y, TaskType.CLASSIFICATION, "t")
+    assert enc.feature_encoders == {}
     Xt = enc.transform_features(X)
-    assert pd.api.types.is_numeric_dtype(Xt["a"])
+    assert list(Xt["a"]) == ["x", "y", "x"]
     yt = enc.transform_target(y)
     assert list(enc.inverse_target(yt)) == ["cat", "dog", "cat"]
+    assert enc.target_classes == ["cat", "dog"]
 
 
 def test_prep_steps_not_fit_with_test_rows():

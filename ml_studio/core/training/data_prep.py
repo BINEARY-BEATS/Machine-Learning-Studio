@@ -13,26 +13,17 @@ from ml_studio.core.training.task import TaskType
 
 @dataclass
 class EncodingBundle:
-    """Fitted feature/target LabelEncoders — fit on train only, reused at predict."""
+    """Target LabelEncoder only (features use AutoEncode). Fit on train only."""
 
     feature_encoders: dict[str, LabelEncoder] = field(default_factory=dict)
     target_encoder: LabelEncoder | None = None
     feature_columns: list[str] = field(default_factory=list)
     target_column: str = ""
+    target_classes: list[str] = field(default_factory=list)
 
     def transform_features(self, X: pd.DataFrame) -> pd.DataFrame:
-        out = X.copy()
-        for col, le in self.feature_encoders.items():
-            if col not in out.columns:
-                continue
-            raw = out[col].astype(str)
-            known = set(le.classes_)
-            # Unseen categories → most frequent class index (0) to avoid crash
-            mapped = raw.map(lambda v, _le=le, _known=known: (
-                int(_le.transform([v])[0]) if v in _known else 0
-            ))
-            out[col] = mapped.astype(float)
-        return out
+        """No-op for features — AutoEncode handles them. Kept for API compat."""
+        return X.copy()
 
     def transform_target(self, y: pd.Series) -> pd.Series:
         if self.target_encoder is None:
@@ -66,13 +57,9 @@ class EncodingBundle:
     ) -> EncodingBundle:
         self.feature_columns = list(X.columns)
         self.target_column = target_column
-        self.feature_encoders = {}
-        for col in X.columns:
-            if not pd.api.types.is_numeric_dtype(X[col]):
-                le = LabelEncoder()
-                le.fit(X[col].astype(str))
-                self.feature_encoders[col] = le
+        self.feature_encoders = {}  # features → AutoEncode, never LabelEncode
         self.target_encoder = None
+        self.target_classes = []
         if (
             y is not None
             and task == TaskType.CLASSIFICATION
@@ -81,6 +68,7 @@ class EncodingBundle:
             le_y = LabelEncoder()
             le_y.fit(y.astype(str))
             self.target_encoder = le_y
+            self.target_classes = [str(c) for c in le_y.classes_]
         return self
 
 
@@ -90,11 +78,7 @@ def select_training_frame(
     target_column: str | None = None,
     feature_columns: list[str] | None = None,
 ) -> tuple[pd.DataFrame, str, list[str]]:
-    """
-    Column selection and NA cleanup only — no encoding (avoids pre-split leakage).
-
-    Returns (frame, target_column, feature_columns).
-    """
+    """Column selection and NA cleanup only — no encoding."""
     work = df.copy()
 
     if task in (TaskType.CLUSTERING, TaskType.ANOMALY_DETECTION):
@@ -141,15 +125,24 @@ def prepare_for_training(
     feature_columns: list[str] | None = None,
 ) -> tuple[pd.DataFrame, str, list[str], dict]:
     """
-    Backward-compatible helper: select columns only (no full-frame encoding).
-
-    Encoding is performed inside Trainer on the train split via EncodingBundle.
-    Returns (frame, target_column, feature_columns, empty_meta).
+    Select columns, drop missing target, enforce min rows.
+    Never encodes features. For classification with a non-numeric target, fit a
+    LabelEncoder and return classes in meta['target_classes'] (frame target stays raw).
     """
     frame, target, features = select_training_frame(
         df, task, target_column=target_column, feature_columns=feature_columns
     )
-    return frame, target, features, {"label_encoders": {}}
+    meta: dict[str, Any] = {"label_encoders": {}, "target_classes": None}
+    if (
+        task == TaskType.CLASSIFICATION
+        and target
+        and target in frame.columns
+        and not pd.api.types.is_numeric_dtype(frame[target])
+    ):
+        le = LabelEncoder()
+        le.fit(frame[target].astype(str))
+        meta["target_classes"] = [str(c) for c in le.classes_]
+    return frame, target, features, meta
 
 
 def suggest_training_columns(df: pd.DataFrame) -> tuple[str, list[str], TaskType]:

@@ -48,3 +48,35 @@ Branch workflow from `docs/CURSOR_PLAN.md`. One task per branch. Do not mark don
 - `.cursorrules`
 - `docs/CURSOR_PLAN.md`
 - `docs/PROGRESS.md` (this file)
+
+---
+
+## B2 — Encoders, labels and feature schema
+
+**Branch:** `fix/b2-encoders`  
+**Status:** Done (2026-10-06)  
+**Depends on:** B1  
+**Next:** B3 (Predict page typed inputs)
+
+### Problem (context)
+
+- Feature LabelEncoding created fake ordinals and was discarded / not reusable at predict.
+- Classification returned `0/1` instead of original string labels.
+- No feature schema for coerce/validate; NaNs crashed models without an Impute step.
+
+### Done
+
+1. `prepare_for_training` — no feature encoding; `meta["target_classes"]` for string targets.
+2. `transforms/auto_encode.py` — `AutoEncode` (one-hot / freq / datetime / bool + impute); hidden from GUI picker, kept in registry for clone.
+3. Trainer appends fitted `AutoEncode` when non-numeric/NaN remain; builds `feature_schema` from RAW `X_train`; stores `target_classes`.
+4. `InferencePipeline` — `target_classes`, `feature_schema`, `coerce_row`, `decode`.
+5. `Predictor` — coerce → predict → decoded label + `{label: prob}`; batch keeps original cols + proba columns.
+6. `TrainingWorker` uses `prepare_for_training`.
+7. Tests: `ml_studio/tests/inference/test_roundtrip.py`.
+
+### Acceptance checked
+
+- TrainingWorker → registry → `predict_single({"city":"Lahore","age":"31"})` returns `"yes"`/`"no"` + prob dict.
+- Unseen category + blank numeric do not raise.
+- Non-numeric text in numeric field → `ValueError` naming the field.
+- 85 related core/training/inference/GUI tests green.
