@@ -32,6 +32,7 @@ class ColumnProfile:
     kurtosis: float | None = None
     entropy: float | None = None
     is_monotonic: bool | None = None
+    top_values: list[Any] = field(default_factory=list)
 
 
 @dataclass
@@ -165,7 +166,14 @@ def profile_dataset(dataset: Dataset, *, use_cache: bool = True) -> DatasetProfi
                     cp.entropy = float(-np.sum(counts * np.log2(counts)))
                 else:
                     cp.entropy = 0.0
-                
+
+        # Top 3 most frequent values (for profiling UI)
+        try:
+            vc = series.value_counts(dropna=True).head(3)
+            cp.top_values = [v.item() if hasattr(v, "item") else v for v in vc.index.tolist()]
+        except Exception:
+            cp.top_values = []
+
         col_profiles.append(cp)
 
     corr = None

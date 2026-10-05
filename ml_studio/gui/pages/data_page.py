@@ -269,12 +269,30 @@ class DataPage(BasePage):
             self._profile_table.setItem(i, 1, QTableWidgetItem(col.dtype))
             self._profile_table.setItem(i, 2, QTableWidgetItem(f"{col.missing_pct:.1f}%"))
             self._profile_table.setItem(i, 3, QTableWidgetItem(str(col.unique)))
-            self._profile_table.setItem(i, 4, QTableWidgetItem(str(col.min or "")))
-            self._profile_table.setItem(i, 5, QTableWidgetItem(str(col.max or "")))
-            self._profile_table.setItem(i, 6, QTableWidgetItem(f"{col.mean:.4g}" if col.mean else ""))
-            self._profile_table.setItem(i, 7, QTableWidgetItem(f"{col.median:.4g}" if col.median else ""))
-            self._profile_table.setItem(i, 8, QTableWidgetItem(f"{col.std:.4g}" if col.std else ""))
-            self._profile_table.setItem(i, 9, QTableWidgetItem("—"))
+            self._profile_table.setItem(
+                i, 4, QTableWidgetItem("" if col.min is None else str(col.min))
+            )
+            self._profile_table.setItem(
+                i, 5, QTableWidgetItem("" if col.max is None else str(col.max))
+            )
+            self._profile_table.setItem(
+                i,
+                6,
+                QTableWidgetItem("" if col.mean is None else f"{col.mean:.4g}"),
+            )
+            self._profile_table.setItem(
+                i,
+                7,
+                QTableWidgetItem("" if col.median is None else f"{col.median:.4g}"),
+            )
+            self._profile_table.setItem(
+                i,
+                8,
+                QTableWidgetItem("" if col.std is None else f"{col.std:.4g}"),
+            )
+            top = getattr(col, "top_values", None) or []
+            top_text = ", ".join(str(v) for v in top) if top else "—"
+            self._profile_table.setItem(i, 9, QTableWidgetItem(top_text))
 
         self._issues_table.setRowCount(max(1, len(issues)))
         if not issues:
