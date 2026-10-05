@@ -107,7 +107,9 @@ class Predictor:
             try:
                 proba = self.pipeline.predict_proba(df)
                 for i, label in enumerate(classes):
-                    out[f"proba_{label}"] = proba[:, i]
+                    name = str(label)
+                    col = name if name not in out.columns else f"proba_{name}"
+                    out[col] = proba[:, i]
             except Exception:
                 pass
         return out

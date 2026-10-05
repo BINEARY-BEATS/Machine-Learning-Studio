@@ -222,10 +222,12 @@ class AppController:
             prepare_data=True,
         )
 
-    def build_batch_predict_worker(self, path: Path) -> BatchPredictWorker | None:
+    def build_batch_predict_worker(
+        self, path: Path, output_path: Path | None = None
+    ) -> BatchPredictWorker | None:
         if not self.predictor:
             return None
-        return BatchPredictWorker(self.predictor, path)
+        return BatchPredictWorker(self.predictor, path, output_path=output_path)
 
     def build_preview_worker(self, pipeline, dataset) -> PreviewWorker:
         return PreviewWorker(pipeline, dataset)

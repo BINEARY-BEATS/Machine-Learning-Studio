@@ -4,58 +4,64 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pandas as pd
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QFileDialog,
-    QHBoxLayout,
     QLabel,
-    QLineEdit,
-    QMessageBox,
     QPushButton,
-    QSizePolicy,
-    QTableWidget,
-    QTableWidgetItem,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
 from ml_studio.app.theme import ThemeMode
-from ml_studio.gui.layout_utils import constrain_primary_button, configure_table_header
+from ml_studio.gui.layout_utils import constrain_primary_button
 from ml_studio.gui.pages.base_page import BasePage
+from ml_studio.gui.pages.predict_tabs import (
+    build_drift_tab,
+    build_explain_tab,
+    pick_drift_file,
+    run_drift,
+    run_importance,
+)
 from ml_studio.gui.widgets.card import Card
 from ml_studio.gui.widgets.empty_state import EmptyState
 from ml_studio.gui.widgets.pill_tabs import PillTabs
+from ml_studio.gui.widgets.schema_form import (
+    build_feature_row,
+    clear_field_errors,
+    clear_layout,
+    collect_values,
+    mark_field_errors,
+    render_proba_bars,
+    schema_or_empty,
+)
+from ml_studio.gui.workers.batch_predict_worker import BatchPredictWorker
 
 
 class PredictPage(BasePage):
-    batch_predict_requested = pyqtSignal(str)
+    batch_predict_requested = pyqtSignal(str, str)
 
     def __init__(self, container, parent=None):
         self._predictor = None
         self._features: list[str] = []
         self._task = None
-        self._predict_connected = False
         self._mode = ThemeMode.LIGHT
+        self._inputs: dict[str, QWidget] = {}
+        self._error_labels: dict[str, QLabel] = {}
         super().__init__(container, parent)
 
     def _build_ui(self) -> None:
         title = QLabel("Predict")
         title.setObjectName("PageTitle")
         self._layout.addWidget(title)
-
-        single = self._build_single_tab()
-        batch = self._build_batch_tab()
-        explain = self._build_explain_tab()
-        drift = self._build_drift_tab()
-
         self._tabs = PillTabs(
             [
-                ("Single", "ai", single),
-                ("Batch", "import", batch),
-                ("Explain", "chart", explain),
-                ("Drift", "scale", drift),
+                ("Single", "ai", self._build_single_tab()),
+                ("Batch", "import", self._build_batch_tab()),
+                ("Explain", "chart", build_explain_tab(self)),
+                ("Drift", "scale", build_drift_tab(self)),
             ]
         )
         self._layout.addWidget(self._tabs, 1)
@@ -81,30 +87,34 @@ class PredictPage(BasePage):
         if hasattr(win, "_navigate"):
             win._navigate("train")
 
-    def _wrap(self, widget: QWidget) -> QWidget:
-        box = QWidget()
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(0, 0, 0, 0)
-        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        layout.addWidget(widget, 1)
-        return box
-
     def _build_single_tab(self) -> QWidget:
         box = QWidget()
         layout = QVBoxLayout(box)
         card = Card("Single prediction")
-        self._inputs: dict[str, QLineEdit] = {}
-        self._inputs_layout = QVBoxLayout()
-        card.add_layout(self._inputs_layout)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        form_host = QWidget()
+        self._inputs_layout = QVBoxLayout(form_host)
+        self._inputs_layout.setContentsMargins(0, 0, 0, 0)
+        scroll.setWidget(form_host)
+        card.add_widget(scroll, stretch=1)
         self._explain_check = QCheckBox("Include local explanation (SHAP if available)")
         card.add_widget(self._explain_check)
         self._predict_btn = QPushButton("Predict")
         self._predict_btn.setObjectName("PrimaryButton")
         constrain_primary_button(self._predict_btn)
+        self._predict_btn.clicked.connect(self._run_single)
+        self._validation_banner = QLabel("")
+        self._validation_banner.setObjectName("ValidationError")
+        self._validation_banner.hide()
         self._result_label = QLabel("")
         self._result_label.setWordWrap(True)
+        self._result_label.setObjectName("SectionTitle")
+        self._proba_host = QVBoxLayout()
         card.add_widget(self._predict_btn)
+        card.add_widget(self._validation_banner)
         card.add_widget(self._result_label)
+        card.add_layout(self._proba_host)
         layout.addWidget(card, 1)
         return box
 
@@ -118,142 +128,17 @@ class PredictPage(BasePage):
         self._batch_run = QPushButton("Run batch prediction")
         self._batch_run.setObjectName("PrimaryButton")
         constrain_primary_button(self._batch_run)
+        self._batch_status = QLabel("")
+        self._batch_status.setObjectName("ValidationError")
+        self._batch_status.setWordWrap(True)
         self._batch_btn.clicked.connect(self._pick_batch_file)
         self._batch_run.clicked.connect(self._run_batch)
         card.add_widget(self._batch_path)
         card.add_widget(self._batch_btn)
         card.add_widget(self._batch_run)
+        card.add_widget(self._batch_status)
         layout.addWidget(card, 1)
         return box
-
-    def _build_explain_tab(self) -> QWidget:
-        box = QWidget()
-        layout = QVBoxLayout(box)
-        card = Card("Feature importance")
-        hint = QLabel(
-            "Permutation importance on the current dataset (sampled). "
-            "Requires a loaded model and an imported dataset with the training target."
-        )
-        hint.setObjectName("TextMuted")
-        hint.setWordWrap(True)
-        card.add_widget(hint)
-        self._explain_btn = QPushButton("Compute importance")
-        self._explain_btn.setObjectName("PrimaryButton")
-        constrain_primary_button(self._explain_btn)
-        self._explain_btn.clicked.connect(self._run_importance)
-        card.add_widget(self._explain_btn)
-        self._importance_table = QTableWidget()
-        self._importance_table.setColumnCount(2)
-        self._importance_table.setHorizontalHeaderLabels(["Feature", "Importance"])
-        configure_table_header(
-            self._importance_table.horizontalHeader(),
-            contents_cols=(0,),
-            stretch_cols=(1,),
-        )
-        self._importance_table.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-        )
-        self._importance_placeholder = QLabel("No importance scores yet. Click Compute importance.")
-        self._importance_placeholder.setObjectName("TextMuted")
-        self._importance_placeholder.setAlignment(
-            __import__("PyQt6.QtCore", fromlist=["Qt"]).Qt.AlignmentFlag.AlignCenter
-        )
-        card.add_widget(self._importance_placeholder)
-        card.add_widget(self._importance_table, stretch=1)
-        self._importance_table.hide()
-        self._explain_status = QLabel("")
-        self._explain_status.setWordWrap(True)
-        card.add_widget(self._explain_status)
-        layout.addWidget(card, 1)
-        return box
-
-    def _build_drift_tab(self) -> QWidget:
-        box = QWidget()
-        layout = QVBoxLayout(box)
-        card = Card("Drift monitoring")
-        hint = QLabel(
-            "Compare a batch file to the training feature distribution (PSI / KS). "
-            "Requires a bound model and a CSV/Parquet with the same feature columns."
-        )
-        hint.setWordWrap(True)
-        card.add_widget(hint)
-        row = QHBoxLayout()
-        self._drift_path = QLineEdit()
-        self._drift_path.setPlaceholderText("Path to batch file…")
-        pick = QPushButton("Browse")
-        pick.setObjectName("GhostButton")
-        pick.clicked.connect(self._pick_drift_file)
-        run = QPushButton("Compute drift")
-        run.setObjectName("PrimaryButton")
-        constrain_primary_button(run)
-        run.clicked.connect(self._run_drift)
-        row.addWidget(self._drift_path, 1)
-        row.addWidget(pick)
-        row.addWidget(run)
-        card.add_layout(row)
-        self._drift_table = QTableWidget()
-        self._drift_table.setColumnCount(4)
-        self._drift_table.setHorizontalHeaderLabels(["Column", "PSI", "KS", "Status"])
-        configure_table_header(
-            self._drift_table.horizontalHeader(),
-            contents_cols=(1, 2, 3),
-            stretch_cols=(0,),
-        )
-        card.add_widget(self._drift_table, stretch=1)
-        self._drift_status = QLabel("")
-        self._drift_status.setObjectName("MonoMetric")
-        card.add_widget(self._drift_status)
-        layout.addWidget(card, 1)
-        return box
-
-    def _pick_drift_file(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Drift batch file", str(Path.home()), "Data (*.csv *.parquet)"
-        )
-        if path:
-            self._drift_path.setText(path)
-
-    def _run_drift(self) -> None:
-        if not self._predictor:
-            QMessageBox.warning(self, "Drift", "Bind a trained model first.")
-            return
-        path = self._drift_path.text().strip()
-        if not path:
-            QMessageBox.warning(self, "Drift", "Choose a batch file.")
-            return
-        try:
-            from ml_studio.core.evaluation.drift import drift_report
-
-            win = self.window()
-            controller = getattr(win, "controller", None)
-            if controller is None or controller.current_dataset is None:
-                QMessageBox.warning(self, "Drift", "Load the training dataset for reference.")
-                return
-            ref = controller.current_dataset.dataframe
-            p = Path(path)
-            cur = pd.read_csv(p) if p.suffix.lower() == ".csv" else pd.read_parquet(p)
-            cols = list(
-                getattr(self._predictor.pipeline, "input_feature_columns", None)
-                or self._features
-            )
-            report = drift_report(ref, cur, columns=[c for c in cols if c in ref.columns])
-            self._drift_status.setText(
-                f"Overall: {report['overall'].upper()}  ·  "
-                f"{report['n_drift']} drift / {report['n_shift']} shift / {report['n_columns']} cols"
-            )
-            rows = report["columns"]
-            self._drift_table.setRowCount(len(rows))
-            for i, r in enumerate(rows):
-                self._drift_table.setItem(i, 0, QTableWidgetItem(r["column"]))
-                self._drift_table.setItem(
-                    i, 1, QTableWidgetItem("—" if r["psi"] is None else f"{r['psi']:.4f}")
-                )
-                self._drift_table.setItem(
-                    i, 2, QTableWidgetItem("—" if r["ks"] is None else f"{r['ks']:.4f}")
-                )
-                self._drift_table.setItem(i, 3, QTableWidgetItem(r["status"]))
-        except Exception as exc:
-            QMessageBox.critical(self, "Drift failed", str(exc))
 
     def bind_predictor(self, predictor, features: list[str], task) -> None:
         self._predictor = predictor
@@ -261,23 +146,20 @@ class PredictPage(BasePage):
         self._task = task
         self._empty.hide()
         self._tabs.show()
-        while self._inputs_layout.count():
-            item = self._inputs_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        clear_layout(self._inputs_layout)
         self._inputs.clear()
-        for col in self._features:
-            row = QHBoxLayout()
-            row.addWidget(QLabel(col))
-            inp = QLineEdit()
+        self._error_labels.clear()
+        schema = schema_or_empty(getattr(predictor, "pipeline", None))
+        cols = list(schema.keys()) if schema else list(features)
+        for col in cols:
+            wrap, inp, err = build_feature_row(col, schema.get(col), self)
             self._inputs[col] = inp
-            row.addWidget(inp)
-            wrap = QWidget()
-            wrap.setLayout(row)
+            self._error_labels[col] = err
             self._inputs_layout.addWidget(wrap)
-        if not self._predict_connected:
-            self._predict_btn.clicked.connect(self._run_single)
-            self._predict_connected = True
+        self._inputs_layout.addStretch(1)
+        self._result_label.clear()
+        clear_layout(self._proba_host)
+        self._validation_banner.hide()
 
     def _pick_batch_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -285,112 +167,74 @@ class PredictPage(BasePage):
         )
         if path:
             self._batch_path.setText(path)
+            self._batch_status.clear()
 
     def _run_single(self) -> None:
         if not self._predictor:
             return
-        features = {col: inp.text() for col, inp in self._inputs.items()}
+        clear_field_errors(self._inputs, self._error_labels)
+        self._validation_banner.hide()
+        values = collect_values(self._inputs)
+        pipe = getattr(self._predictor, "pipeline", None)
         try:
+            if pipe is not None and schema_or_empty(pipe):
+                pipe.coerce_row(values)
             result = self._predictor.predict_single(
-                features, explain=self._explain_check.isChecked()
+                values, explain=self._explain_check.isChecked()
             )
             self.show_prediction(result)
+        except ValueError as exc:
+            errors = exc.args[0] if exc.args and isinstance(exc.args[0], dict) else {}
+            if errors:
+                mark_field_errors(self._inputs, self._error_labels, errors)
+                self._validation_banner.setText(
+                    "; ".join(f"{k}: {v}" for k, v in errors.items())
+                )
+                self._validation_banner.show()
+                return
+            self._validation_banner.setText(str(exc))
+            self._validation_banner.show()
         except Exception as exc:
             self._result_label.setText(f"Error: {exc}")
-            QMessageBox.critical(self, "Predict", f"Prediction failed:\n{exc}")
 
     def show_prediction(self, result) -> None:
-        text = f"Prediction: {result.prediction}"
-        if getattr(result, "probabilities", None):
-            probs_obj = result.probabilities
-            if isinstance(probs_obj, dict):
-                probs = ", ".join(f"{k}={v:.3f}" for k, v in probs_obj.items())
-            else:
-                probs = ", ".join(f"{p:.3f}" for p in probs_obj)
-            text += f"  (proba: {probs})"
+        self._result_label.setText(f"Prediction: {result.prediction}")
+        probs = getattr(result, "probabilities", None)
+        render_proba_bars(self._proba_host, probs if isinstance(probs, dict) else None)
         if getattr(result, "explanation", None):
-            text += "\nLocal explanation available (see Explain details in result metadata)."
-            shap = result.explanation.get("shap") if isinstance(result.explanation, dict) else None
-            if shap and shap.get("feature_names"):
-                text += f"\nSHAP features: {', '.join(map(str, shap['feature_names'][:8]))}"
-        self._result_label.setText(text)
+            note = QLabel("Local explanation available.")
+            note.setObjectName("TextMuted")
+            self._proba_host.addWidget(note)
 
     def _run_batch(self) -> None:
         path_text = self._batch_path.text()
         if not path_text or path_text == "No file selected" or not self._predictor:
             return
-        self.batch_predict_requested.emit(path_text)
+        path = Path(path_text)
+        expected = list(
+            getattr(self._predictor.pipeline, "input_feature_columns", None) or self._features
+        )
+        try:
+            missing, extra = BatchPredictWorker.preflight(path, expected)
+        except Exception as exc:
+            self._batch_status.setText(str(exc))
+            return
+        if missing:
+            self._batch_status.setText(f"Missing columns: {', '.join(missing)}")
+            return
+        self._batch_status.setText(
+            f"Note: extra columns ignored: {', '.join(extra[:8])}" if extra else ""
+        )
+        default = str(path.with_name(f"{path.stem}_predictions.csv"))
+        out, _ = QFileDialog.getSaveFileName(self, "Save predictions", default, "CSV (*.csv)")
+        if out:
+            self.batch_predict_requested.emit(path_text, out)
+
+    def _pick_drift_file(self) -> None:
+        pick_drift_file(self)
+
+    def _run_drift(self) -> None:
+        run_drift(self)
 
     def _run_importance(self) -> None:
-        if not self._predictor:
-            self._explain_status.setText("Load a model first.")
-            return
-        win = self.window()
-        controller = getattr(win, "controller", None)
-        dataset = getattr(controller, "current_dataset", None) if controller else None
-        result = getattr(controller, "current_result", None) if controller else None
-        if dataset is None:
-            self._explain_status.setText("Import the training dataset on the Data page first.")
-            return
-
-        target = None
-        if result is not None:
-            target = getattr(result, "target_column", None)
-        target = target or getattr(dataset, "target_column", None)
-        features = self._features or list(
-            getattr(self._predictor.pipeline, "feature_columns", []) or []
-        )
-        if not features:
-            self._explain_status.setText("No feature columns on the loaded model.")
-            return
-
-        try:
-            from ml_studio.core.evaluation.explain import compute_permutation_importance
-            from ml_studio.core.training.task import TaskType
-
-            df = dataset.dataframe
-            missing = [c for c in features if c not in df.columns]
-            if missing:
-                self._explain_status.setText(
-                    f"Dataset is missing model features: {', '.join(missing[:5])}"
-                )
-                return
-
-            sample = df[features].head(2000)
-            task = self._task or getattr(self._predictor.pipeline, "task", None)
-            unsupervised = task in (
-                TaskType.CLUSTERING,
-                TaskType.ANOMALY_DETECTION,
-            ) if task is not None else False
-
-            if unsupervised or not target or target not in df.columns:
-                # Fall back: variance of predictions under column shuffle proxy — skip
-                self._explain_status.setText(
-                    "Permutation importance needs a target column on the current dataset."
-                )
-                return
-
-            y = df.loc[sample.index, target]
-            aligned = pd.concat([sample, y], axis=1).dropna()
-            if len(aligned) < 10:
-                self._explain_status.setText("Not enough complete rows to compute importance.")
-                return
-            X_raw = aligned[features]
-            y_s = aligned[target]
-            X = self._predictor.pipeline.transform(X_raw)
-            if not isinstance(X, pd.DataFrame):
-                X = pd.DataFrame(X, columns=[f"f{i}" for i in range(getattr(X, "shape", [0, 0])[1])])
-            model = self._predictor.pipeline.estimator
-            self._explain_status.setText("Computing permutation importance…")
-            scores = compute_permutation_importance(model, X, y_s, n_repeats=5)
-            ranked = sorted(scores.items(), key=lambda kv: abs(kv[1]), reverse=True)
-            self._importance_placeholder.hide()
-            self._importance_table.show()
-            self._importance_table.setRowCount(len(ranked))
-            for i, (name, score) in enumerate(ranked):
-                self._importance_table.setItem(i, 0, QTableWidgetItem(str(name)))
-                self._importance_table.setItem(i, 1, QTableWidgetItem(f"{score:.6f}"))
-            self._explain_status.setText(f"Computed on {len(aligned):,} rows (max 2000 sample).")
-        except Exception as exc:
-            self._explain_status.setText(f"Explain failed: {exc}")
-            QMessageBox.warning(self, "Explain", str(exc))
+        run_importance(self)

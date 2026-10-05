@@ -59,7 +59,7 @@ def test_training_worker():
     assert res == "trained_model"
 
 
-@patch("ml_studio.gui.workers.training_worker.select_training_frame")
+@patch("ml_studio.gui.workers.training_worker.prepare_for_training")
 def test_training_worker_prepares_data(mock_prep):
     from ml_studio.core.training.task import TaskType
     from ml_studio.core.training.trainer import TrainingConfig
@@ -72,7 +72,7 @@ def test_training_worker_prepares_data(mock_prep):
         hyperparameters={},
         test_size=0.2,
     )
-    mock_prep.return_value = (MagicMock(name="prepared"), "y", ["x"])
+    mock_prep.return_value = (MagicMock(name="prepared"), "y", ["x"], {})
     worker = TrainingWorker(MagicMock(name="raw"), config, None, prepare_data=True)
     worker._trainer = MagicMock()
     worker._trainer.train.return_value = "ok"
@@ -91,12 +91,15 @@ def test_optimize_worker(mock_opt):
     assert res["report"]["reduction_pct"] == 10.0
 
 
-def test_batch_predict_worker():
+def test_batch_predict_worker(tmp_path):
     from pathlib import Path
     from ml_studio.gui.workers.batch_predict_worker import BatchPredictWorker
 
     predictor = MagicMock()
     predictor.predict_batch.return_value = Path("out.csv")
-    worker = BatchPredictWorker(predictor, Path("in.csv"))
+    out = tmp_path / "pred.csv"
+    worker = BatchPredictWorker(predictor, Path("in.csv"), output_path=out)
     assert worker.do_work() == Path("out.csv")
     predictor.predict_batch.assert_called_once()
+    kwargs = predictor.predict_batch.call_args.kwargs
+    assert kwargs.get("output_path") == out

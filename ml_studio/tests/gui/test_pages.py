@@ -61,7 +61,10 @@ def test_predict_page_set_predictor(qtbot, container):
     page = PredictPage(container)
     qtbot.addWidget(page)
     mock_predictor = MagicMock()
-    mock_predictor.predict_single.return_value = MagicMock(prediction=1, probabilities=[0.2, 0.8])
+    mock_predictor.pipeline.feature_schema = {}
+    mock_predictor.predict_single.return_value = MagicMock(
+        prediction=1, probabilities=[0.2, 0.8], explanation=None
+    )
 
     page.bind_predictor(mock_predictor, ["Feature1", "Feature2"], TaskType.CLASSIFICATION)
     assert page._predictor is mock_predictor

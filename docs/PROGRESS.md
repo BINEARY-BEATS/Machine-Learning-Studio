@@ -80,3 +80,31 @@ Branch workflow from `docs/CURSOR_PLAN.md`. One task per branch. Do not mark don
 - Unseen category + blank numeric do not raise.
 - Non-numeric text in numeric field → `ValueError` naming the field.
 - 85 related core/training/inference/GUI tests green.
+
+---
+
+## B3 — Predict page: typed, validated inputs
+
+**Branch:** `fix/b3-predict-inputs`  
+**Status:** Done (2026-10-06)  
+**Depends on:** B2  
+**Next:** B4 (DBSCAN / unsupervised) or B5/B6/B8 as independent
+
+### Problem (context)
+
+- Predict form was all `QLineEdit` strings; no schema casting/validation/category lists.
+- Batch wrote beside the input with no column preflight; predict button used a connect flag hack.
+
+### Done
+
+1. Schema-driven inputs via `gui/widgets/schema_form.py` (numeric/categorical/boolean/datetime; fallback LineEdit).
+2. `_run_single` uses `coerce_row`; field `error=true` + inline banner (no QMessageBox for validation); prob bars.
+3. Batch preflight (`BatchPredictWorker.preflight`) + save dialog default `*_predictions.csv`.
+4. Predict button connected once in `_build_single_tab`.
+5. QSS: `[error="true"]`, `#ValidationError`, `#ClassProbBar` using `palette.danger` / primary.
+6. Tests: `tests/gui/test_predict_schema.py`.
+
+### Acceptance checked
+
+- Categorical combobox from schema; invalid numeric flagged; decoded label + bars; preflight lists missing columns.
+- Existing predict/pages/workers tests updated and green.

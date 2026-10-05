@@ -497,8 +497,9 @@ class MainWindow(QMainWindow):
         self._navigate("evaluate")
         self._toast.show_message(message, variant="success")
 
-    def _run_batch_predict(self, path: str) -> None:
-        worker = self.controller.build_batch_predict_worker(Path(path))
+    def _run_batch_predict(self, path: str, output_path: str = "") -> None:
+        out = Path(output_path) if output_path else None
+        worker = self.controller.build_batch_predict_worker(Path(path), out)
         if worker is None:
             self._toast.show_message("No model loaded for prediction.", variant="warning")
             return

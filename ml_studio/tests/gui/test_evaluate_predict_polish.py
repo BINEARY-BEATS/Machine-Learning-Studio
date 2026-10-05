@@ -50,6 +50,8 @@ def test_predict_drift_tab_has_psi_controls(qtbot, container):
 def test_predict_bind_shows_tabs(qtbot, container):
     page = PredictPage(container)
     qtbot.addWidget(page)
-    page.bind_predictor(MagicMock(), ["a", "b"], MagicMock())
+    predictor = MagicMock()
+    predictor.pipeline.feature_schema = {}
+    page.bind_predictor(predictor, ["a", "b"], MagicMock())
     assert page._empty.isHidden()
     assert "a" in page._inputs

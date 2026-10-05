@@ -119,6 +119,26 @@ def _inputs_qss(p, s, r) -> str:
         selection-background-color: {p.primary_subtle};
     }}
     QLineEdit:focus, QComboBox:focus {{ border-color: {p.primary}; }}
+    QLineEdit[error="true"], QComboBox[error="true"] {{
+        border: 1px solid {p.danger};
+        background-color: {p.surface};
+    }}
+    QLabel#ValidationError {{
+        color: {p.danger};
+        font-size: 12px;
+    }}
+    QProgressBar#ClassProbBar {{
+        background-color: {p.surface_raised};
+        border: 1px solid {p.border};
+        border-radius: {r['sm']}px;
+        text-align: center;
+        color: {p.text};
+        min-height: 18px;
+    }}
+    QProgressBar#ClassProbBar::chunk {{
+        background-color: {p.primary};
+        border-radius: {r['sm']}px;
+    }}
     QLineEdit#SearchBar {{
         background-color: {p.surface_raised};
         border: 1px solid {p.border_subtle};
