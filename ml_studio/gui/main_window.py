@@ -204,7 +204,7 @@ class MainWindow(QMainWindow):
         )
         if key in ("prepare", "train") and not has_data:
             return "No dataset loaded yet. Import data on the Data page first."
-        if key == "evaluate" and not self._pages["evaluate"]._runs and not has_model:
+        if key == "evaluate" and not self._pages["evaluate"].run_count() and not has_model:
             return "No experiments yet. Train a model first."
         if key == "predict" and not has_model:
             return "No model loaded. Train or open a model from Models first."

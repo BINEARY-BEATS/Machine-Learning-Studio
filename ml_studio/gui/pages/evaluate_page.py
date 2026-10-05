@@ -215,6 +215,9 @@ class EvaluatePage(BasePage):
         except Exception:
             pass
 
+    def run_count(self) -> int:
+        return len(self._runs)
+
     def _primary_score(self, task: str, metrics: dict):
         if task == "REGRESSION":
             return metrics.get("r2")
@@ -261,7 +264,13 @@ class EvaluatePage(BasePage):
     def _show_run_detail(self, run: ExperimentRun) -> None:
         score_name = self._score_label(run.task)
         primary = self._primary_score(run.task, run.metrics)
-        metric_key = score_name.lower().replace("²", "2").replace(" ", "")
+        metric_key = {
+            "REGRESSION": "r2",
+            "TIME_SERIES": "r2",
+            "CLASSIFICATION": "f1",
+            "CLUSTERING": "silhouette",
+        }.get(run.task, "r2")
+        self._primary_card.set_metric_key(metric_key)
         self._primary_card.set_value(
             f"{primary:.4f}" if isinstance(primary, float) else "—",
             raw=primary,

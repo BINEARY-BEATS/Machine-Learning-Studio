@@ -14,6 +14,33 @@ def test_evaluate_page_init(container, qtbot):
     qtbot.addWidget(page)
     assert page._metrics_table is not None
 
+
+def test_evaluate_page_run_count_and_metric_key(container, qtbot):
+    from ml_studio.gui.pages.evaluate_page import ExperimentRun
+
+    page = EvaluatePage(container)
+    qtbot.addWidget(page)
+    assert page.run_count() == 0
+    page._runs.append(
+        ExperimentRun(
+            run_id="1",
+            model_name="m",
+            model_id="m",
+            task="CLASSIFICATION",
+            dataset_name="d",
+            target="y",
+            metrics={"f1": 0.9, "accuracy": 0.91},
+            cv_mean=None,
+            cv_std=None,
+            duration_sec=1.0,
+            train_rows=10,
+            test_rows=5,
+        )
+    )
+    page._show_run_detail(page._runs[0])
+    assert page._primary_card._metric_key == "f1"
+    assert page.run_count() == 1
+
 def test_evaluate_page_add_run(container, qtbot):
     page = EvaluatePage(container)
     qtbot.addWidget(page)
